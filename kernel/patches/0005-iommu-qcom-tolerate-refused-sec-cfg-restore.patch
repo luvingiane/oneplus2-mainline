@@ -1,0 +1,44 @@
+From: Matt
+Subject: [PATCH] iommu/qcom: go on when TrustZone refuses the secure config restore
+
+OnePlus 2 bring-up: MSM8994 TrustZone answers -EINVAL to
+qcom_scm_restore_sec_cfg() for the GPU SMMU (secure id 18), which made
+every context bank probe fail and the GPU lose its IOMMU. Treat -EINVAL as
+"nothing to restore" and keep the boot-time configuration.
+
+---
+--- a/drivers/iommu/arm/arm-smmu/qcom_iommu.c
+--- a/drivers/iommu/arm/arm-smmu/qcom_iommu.c
++++ b/drivers/iommu/arm/arm-smmu/qcom_iommu.c
+@@ -254,6 +254,9 @@
+ 
+ 		if (!ctx->secure_init) {
+ 			ret = qcom_scm_restore_sec_cfg(qcom_iommu->sec_id, ctx->asid);
++			/* MSM8994 GPU SMMU: refused (-EINVAL), see qcom_iommu_resume() */
++			if (ret == -EINVAL)
++				ret = 0;
+ 			if (ret) {
+ 				dev_err(qcom_iommu->dev, "secure init failed: %d\n", ret);
+ 				goto out_clear_iommu;
+@@ -899,8 +902,19 @@
+ 	if (ret < 0)
+ 		return ret;
+ 
+-	if (dev->pm_domain)
+-		return qcom_scm_restore_sec_cfg(qcom_iommu->sec_id, 0);
++	if (dev->pm_domain) {
++		ret = qcom_scm_restore_sec_cfg(qcom_iommu->sec_id, 0);
++		/*
++		 * MSM8994's TrustZone refuses the restore for the GPU SMMU
++		 * (secure id 18: -EINVAL); its banks keep the boot setup.
++		 */
++		if (ret == -EINVAL) {
++			dev_info_once(dev, "secure config restore refused (id %u), going on\n",
++				      qcom_iommu->sec_id);
++			ret = 0;
++		}
++		return ret;
++	}
+ 
+ 	return ret;
+ }

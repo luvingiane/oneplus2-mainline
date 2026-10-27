@@ -1,0 +1,12 @@
+[Unit]
+Description=OnePlus 2: keep the USB network link to the computer up
+After=NetworkManager.service
+Wants=NetworkManager.service
+
+[Service]
+ExecStart=/usr/local/bin/op2-usb-watch
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

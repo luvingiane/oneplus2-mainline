@@ -1,0 +1,151 @@
+From: Matt
+Subject: [PATCH] drm/msm: OnePlus 2 bring-up trace of the GPU power-up and a4xx init
+
+msm.op2_trace=1: one log line and 150 ms at each step of msm_gpu_pm_resume()
+and a4xx_hw_init(), so a remote console (dmesg -w over USB) gets the last
+step before a hard reset. Off by default. Not for upstream.
+---
+diff -ruN a/drivers/gpu/drm/msm/adreno/a4xx_gpu.c b/drivers/gpu/drm/msm/adreno/a4xx_gpu.c
+--- a/drivers/gpu/drm/msm/adreno/a4xx_gpu.c	2026-10-27 20:39:56.741885156 +0100
++++ b/drivers/gpu/drm/msm/adreno/a4xx_gpu.c	2026-10-27 20:57:16.171417054 +0100
+@@ -187,6 +187,28 @@
+ 	uint32_t *ptr, len;
+ 	int i, ret;
+ 
++	OP2T();
++	if (op2_trace) {
++		/* GDSCR bit 31 = power on; CBCR bit 31 = clock off */
++		void __iomem *mm = ioremap(0xfd8c0000, 0x6000);
++
++		if (mm) {
++			pr_info("op2gpu: mmcc GX %08x CX %08x gfx3d %08x cxahb %08x rbbm %08x ocmemnoc %08x mmssnoc_axi %08x s0_axi %08x\n",
++				readl(mm + 0x4024), readl(mm + 0x4034), readl(mm + 0x4028),
++				readl(mm + 0x403c), readl(mm + 0x40b0), readl(mm + 0x4058),
++				readl(mm + 0x506c), readl(mm + 0x5064));
++			iounmap(mm);
++		}
++		msleep(150);
++	}
++	if (op2_trace) {
++		pr_info("op2gpu: reading RBBM_HW_VERSION\n");
++		msleep(150);
++		pr_info("op2gpu: RBBM_HW_VERSION %08x\n", gpu_read(gpu, REG_A4XX_RBBM_HW_VERSION));
++		msleep(150);
++		pr_info("op2gpu: VBIF_VERSION %08x\n", gpu_read(gpu, REG_A4XX_VBIF_VERSION));
++		msleep(150);
++	}
+ 	if (adreno_is_a405(adreno_gpu)) {
+ 		gpu_write(gpu, REG_A4XX_VBIF_ROUND_ROBIN_QOS_ARB, 0x00000003);
+ 	} else if (adreno_is_a420(adreno_gpu)) {
+@@ -213,6 +235,7 @@
+ 	gpu_write(gpu, REG_A4XX_RBBM_GPU_BUSY_MASKED, 0xffffffff);
+ 
+ 	/* Tune the hystersis counters for SP and CP idle detection */
++	OP2T();
+ 	gpu_write(gpu, REG_A4XX_RBBM_SP_HYST_CNT, 0x10);
+ 	gpu_write(gpu, REG_A4XX_RBBM_WAIT_IDLE_CLOCKS_CTL, 0x10);
+ 
+@@ -266,7 +289,9 @@
+ 			0x00000441);
+ 	}
+ 
++	OP2T();
+ 	a4xx_enable_hwcg(gpu);
++	OP2T();
+ 
+ 	/*
+ 	 * For A420 set RBBM_CLOCK_DELAY_HLSQ.CGC_HLSQ_TP_EARLY_CYC >= 2
+@@ -284,6 +309,7 @@
+ 	gpu_write(gpu, REG_A4XX_CP_PROTECT_CTRL, 0x00000007);
+ 
+ 	/* RBBM registers */
++	OP2T();
+ 	gpu_write(gpu, REG_A4XX_CP_PROTECT(0), 0x62000010);
+ 	gpu_write(gpu, REG_A4XX_CP_PROTECT(1), 0x63000020);
+ 	gpu_write(gpu, REG_A4XX_CP_PROTECT(2), 0x64000040);
+@@ -310,7 +336,9 @@
+ 
+ 	gpu_write(gpu, REG_A4XX_RBBM_INT_0_MASK, A4XX_INT0_MASK);
+ 
++	OP2T();
+ 	ret = adreno_hw_init(gpu);
++	OP2T();
+ 	if (ret)
+ 		return ret;
+ 
+@@ -324,6 +352,9 @@
+ 	/* Set the ringbuffer address */
+ 	gpu_write(gpu, REG_A4XX_CP_RB_BASE, lower_32_bits(gpu->rb[0]->iova));
+ 
++	if (op2_trace)
++		pr_info("op2gpu: rb iova %llx\n", (unsigned long long)gpu->rb[0]->iova);
++	OP2T();
+ 	/* Load PM4: */
+ 	ptr = (uint32_t *)(adreno_gpu->fw[ADRENO_FW_PM4]->data);
+ 	len = adreno_gpu->fw[ADRENO_FW_PM4]->size / 4;
+@@ -341,10 +372,14 @@
+ 	for (i = 1; i < len; i++)
+ 		gpu_write(gpu, REG_A4XX_CP_PFP_UCODE_DATA, ptr[i]);
+ 
++	OP2T();
+ 	/* clear ME_HALT to start micro engine */
+ 	gpu_write(gpu, REG_A4XX_CP_ME_CNTL, 0);
+ 
+-	return a4xx_me_init(gpu) ? 0 : -EINVAL;
++	OP2T();
++	ret = a4xx_me_init(gpu) ? 0 : -EINVAL;
++	OP2T();
++	return ret;
+ }
+ 
+ static void a4xx_recover(struct msm_gpu *gpu)
+diff -ruN a/drivers/gpu/drm/msm/msm_gpu.c b/drivers/gpu/drm/msm/msm_gpu.c
+--- a/drivers/gpu/drm/msm/msm_gpu.c	2026-10-27 20:39:56.737330425 +0100
++++ b/drivers/gpu/drm/msm/msm_gpu.c	2026-10-27 20:39:56.754296133 +0100
+@@ -7,6 +7,9 @@
+ #include "drm/drm_drv.h"
+ 
+ #include "msm_gpu.h"
++
++bool op2_trace;
++module_param(op2_trace, bool, 0644);
+ #include "msm_gem.h"
+ #include "msm_mmu.h"
+ #include "msm_fence.h"
+@@ -103,17 +106,21 @@
+ 	DBG("%s", gpu->name);
+ 	trace_msm_gpu_resume(0);
+ 
++	OP2T();
+ 	ret = enable_pwrrail(gpu);
+ 	if (ret)
+ 		return ret;
+ 
++	OP2T();
+ 	ret = enable_clk(gpu);
+ 	if (ret)
+ 		return ret;
+ 
++	OP2T();
+ 	ret = enable_axi(gpu);
+ 	if (ret)
+ 		return ret;
++	OP2T();
+ 
+ 	msm_devfreq_resume(gpu);
+ 
+diff -ruN a/drivers/gpu/drm/msm/msm_gpu.h b/drivers/gpu/drm/msm/msm_gpu.h
+--- a/drivers/gpu/drm/msm/msm_gpu.h	2026-10-27 20:39:56.732696544 +0100
++++ b/drivers/gpu/drm/msm/msm_gpu.h	2026-10-27 20:39:56.754129045 +0100
+@@ -716,4 +716,11 @@
+ 	(((gpu)->hw_apriv ? MSM_BO_MAP_PRIV : 0) | (flags))
+ 
+ 
++/* OnePlus 2 bring-up (msm.op2_trace=1): a log line and a pause at each GPU
++ * power-up / init step, so the last line reaches a remote console before
++ * a hard reset */
++#include <linux/delay.h>
++extern bool op2_trace;
++#define OP2T() do { if (op2_trace) { pr_info("op2gpu: %s:%d\n", __func__, __LINE__); msleep(150); } } while (0)
++
+ #endif /* __MSM_GPU_H__ */

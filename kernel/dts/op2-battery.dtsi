@@ -1,0 +1,22 @@
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * OnePlus 2 battery: kernel patch 0013 (drivers/power/supply/op2-battery.c).
+ * Init values = what LK leaves on B while it charges (read 2026-10-26:
+ * 0x10f2 FCC_CFG 0x04, 0x10fc CHGR_CFG2 0xd2, 0x13f2 IL_CFG 0x07, 0x1340
+ * CMD_IL 0x07, 0x1242 CMD_CHG_REG 0x00 = charging enabled; written 0x02 then
+ * 0x00 so the enable is seen as a transition). Triples:
+ * <address value sec>, sec = needs the SEC_ACCESS unlock (0xa5 at 0x?d0).
+ */
+&spmi_bus {
+	pmic@2 {
+		battery {
+			compatible = "oneplus,oneplus2-battery";
+			oneplus,init-regs = <0x10f2 0x04 1
+					     0x10fc 0xd2 1
+					     0x13f2 0x07 1
+					     0x1340 0x07 0
+					     0x1242 0x02 0
+					     0x1242 0x00 0>;
+		};
+	};
+};

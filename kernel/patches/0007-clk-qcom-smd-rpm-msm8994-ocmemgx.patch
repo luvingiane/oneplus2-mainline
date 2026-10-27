@@ -1,0 +1,22 @@
+From: Matt
+Subject: [PATCH] clk: qcom: smd-rpm: add the OCMEM GX clock to msm8994
+
+OnePlus 2 bring-up: msm8994.dtsi gives the OCMEM node <&rpmcc
+RPM_SMD_OCMEMGX_CLK>, but msm8994_clks had no such entry, so the OCMEM
+core clock was never voted (the driver takes it as optional). The OnePlus
+kernel drives clk_ocmemgx_core_clk from RPM like msm8974 (MEM clock 2).
+Without it the GPU locks the bus on its first GMEM access.
+
+---
+--- a/drivers/clk/qcom/clk-smd-rpm.c
++++ b/drivers/clk/qcom/clk-smd-rpm.c
+@@ -868,6 +868,9 @@
+ 	[RPM_SMD_XO_A_CLK_SRC] = &clk_smd_rpm_branch_bi_tcxo_a,
+ 	[RPM_SMD_GFX3D_CLK_SRC] = &clk_smd_rpm_gfx3d_clk_src,
+ 	[RPM_SMD_GFX3D_A_CLK_SRC] = &clk_smd_rpm_gfx3d_a_clk_src,
++	/* OCMEM core clock (GPU GMEM): as msm8974, RPM MEM clock 2 */
++	[RPM_SMD_OCMEMGX_CLK] = &clk_smd_rpm_ocmemgx_clk,
++	[RPM_SMD_OCMEMGX_A_CLK] = &clk_smd_rpm_ocmemgx_a_clk,
+ 	[RPM_SMD_BB_CLK1] = &clk_smd_rpm_bb_clk1,
+ 	[RPM_SMD_BB_CLK1_A] = &clk_smd_rpm_bb_clk1_a,
+ 	[RPM_SMD_BB_CLK1_PIN] = &clk_smd_rpm_bb_clk1_pin,

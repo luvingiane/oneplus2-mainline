@@ -1,0 +1,84 @@
+From: Matt
+Subject: [PATCH] iommu/qcom: program the CAF "BFB" settings from DT
+
+OnePlus 2 bring-up: the CAF kernel always writes the SMMU implementation
+settings listed in qcom,iommu-bfb-regs/-data from Linux, even for
+TrustZone-owned SMMUs (msm_iommu_sec.c), right before the secure config
+call. Do the same on resume, before qcom_scm_restore_sec_cfg(), when the
+node gives qcom,bfb-base (SMMU base + 0x2000).
+
+---
+--- a/drivers/iommu/arm/arm-smmu/qcom_iommu.c
++++ b/drivers/iommu/arm/arm-smmu/qcom_iommu.c
+@@ -50,6 +50,11 @@
+ 	struct clk_bulk_data clks[CLK_NUM];
+ 	void __iomem		*local_base;
+ 	u32			 sec_id;
++	/* OnePlus 2 bring-up: implementation-defined "BFB" settings that the
++	 * CAF kernel always programs from Linux (msm_iommu_sec.c) */
++	void __iomem		*bfb_base;
++	u32			*bfb_regs, *bfb_data;
++	int			 bfb_len;
+ 	u8			 max_asid;
+ 	struct qcom_iommu_ctx	*ctxs[];   /* indexed by asid */
+ };
+@@ -783,7 +788,7 @@
+ 	struct device *dev = &pdev->dev;
+ 	struct resource *res;
+ 	struct clk *clk;
+-	int ret, max_asid = 0;
++	int ret, i, max_asid = 0;
+ 
+ 	/* find the max asid (which is 1:1 to ctx bank idx), so we know how
+ 	 * many child ctx devices we have:
+@@ -798,6 +803,30 @@
+ 	qcom_iommu->max_asid = max_asid;
+ 	qcom_iommu->dev = dev;
+ 
++	{
++		u32 base;
++		int n = of_property_count_u32_elems(dev->of_node, "qcom,iommu-bfb-regs");
++
++		if (n > 0 && n == of_property_count_u32_elems(dev->of_node, "qcom,iommu-bfb-data") &&
++		    !of_property_read_u32(dev->of_node, "qcom,bfb-base", &base)) {
++			qcom_iommu->bfb_regs = devm_kcalloc(dev, n, sizeof(u32), GFP_KERNEL);
++			qcom_iommu->bfb_data = devm_kcalloc(dev, n, sizeof(u32), GFP_KERNEL);
++			qcom_iommu->bfb_base = devm_ioremap(dev, base, SZ_4K);
++			if (!qcom_iommu->bfb_regs || !qcom_iommu->bfb_data || !qcom_iommu->bfb_base)
++				return -ENOMEM;
++			of_property_read_u32_array(dev->of_node, "qcom,iommu-bfb-regs",
++						   qcom_iommu->bfb_regs, n);
++			of_property_read_u32_array(dev->of_node, "qcom,iommu-bfb-data",
++						   qcom_iommu->bfb_data, n);
++			/* register offsets are given from the SMMU base, bfb-base
++			 * points at base + 0x2000 */
++			for (i = 0; i < n; i++)
++				qcom_iommu->bfb_regs[i] -= 0x2000;
++			qcom_iommu->bfb_len = n;
++			dev_info(dev, "%d BFB settings at %#x\n", n, base);
++		}
++	}
++
+ 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+ 	if (res) {
+ 		qcom_iommu->local_base = devm_ioremap_resource(dev, res);
+@@ -896,12 +925,18 @@
+ static int __maybe_unused qcom_iommu_resume(struct device *dev)
+ {
+ 	struct qcom_iommu_dev *qcom_iommu = dev_get_drvdata(dev);
+-	int ret;
++	int ret, i;
+ 
+ 	ret = clk_bulk_prepare_enable(CLK_NUM, qcom_iommu->clks);
+ 	if (ret < 0)
+ 		return ret;
+ 
++	for (i = 0; i < qcom_iommu->bfb_len; i++)
++		writel_relaxed(qcom_iommu->bfb_data[i],
++			       qcom_iommu->bfb_base + qcom_iommu->bfb_regs[i]);
++	if (qcom_iommu->bfb_len)
++		wmb();
++
+ 	if (dev->pm_domain) {
+ 		ret = qcom_scm_restore_sec_cfg(qcom_iommu->sec_id, 0);
+ 		/*

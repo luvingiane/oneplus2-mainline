@@ -1,0 +1,2 @@
+# ztOS on the OnePlus 2: the system lives in the userdata partition
+/dev/mmcblk1p43  /  ext4  rw,noatime  0 1

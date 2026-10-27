@@ -1,0 +1,37 @@
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * OnePlus 2 (DTS_DEFINES=OP2_BT): Bluetooth of the QCA6174 combo (ROME).
+ * From the OnePlus kernel (msm8994-mtp.dtsi:18-26, 965-967; board 14049
+ * includes it): BT_EN = PM8994 GPIO 19, UART = BLSP2 UART2 (0xf995e000,
+ * pins 45-48), vdd-io PM8994 S4 1.8 V (always on), xtal PM8994 L30 1.8 V
+ * (in the regulator block of the board dts, under OP2_BT). Mainline:
+ * hci_qca "qcom,qca6174-bt", firmware qca/rampatch_00440302.bin and
+ * qca/nvm_00440302.bin (linux-firmware).
+ */
+&blsp2_uart2 {
+	status = "okay";
+	/* as the I2C buses: no BAM DMA for now */
+	/delete-property/ dmas;
+	/delete-property/ dma-names;
+
+	bluetooth {
+		compatible = "qcom,qca6174-bt";
+		enable-gpios = <&pm8994_gpios 19 GPIO_ACTIVE_HIGH>;
+	};
+};
+
+/*
+ * BT power amplifier supply (OnePlus msm8994-regulator.dtsi:976-982 bt_vreg:
+ * regulator-fixed on PM8994 GPIO 9, active high, 4 ms start-up). hci_qca does
+ * not handle supplies for ROME, so keep it on.
+ */
+/ {
+	bt_pa_vreg: regulator-bt-pa {
+		compatible = "regulator-fixed";
+		regulator-name = "bt_pa";
+		gpio = <&pm8994_gpios 9 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
+		startup-delay-us = <4000>;
+		regulator-always-on;
+	};
+};

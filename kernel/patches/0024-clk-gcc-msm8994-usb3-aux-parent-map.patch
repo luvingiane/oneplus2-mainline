@@ -1,0 +1,19 @@
+From: Matt
+Subject: [PATCH] clk: qcom: gcc-msm8994: give usb3_phy_aux_clk_src a parent map
+
+Its frequency table uses P_XO, but the RCG has no parent_map, so
+clk_set_rate() (e.g. assigned-clock-rates = 1.2 MHz, the rate LK uses for
+fastboot) dereferences NULL in qcom_find_src_index(). OnePlus 2: the phone
+reset at boot. XO is the first entry of gcc_xo_gpll0_map, its only parent.
+---
+--- a/drivers/clk/qcom/gcc-msm8994.c	2026-10-27 19:20:58.229436420 +0100
++++ b/drivers/clk/qcom/gcc-msm8994.c	2026-10-27 19:20:58.241844407 +0100
+@@ -1102,6 +1102,8 @@
+ static struct clk_rcg2 usb3_phy_aux_clk_src = {
+ 	.cmd_rcgr = 0x1414,
+ 	.hid_width = 5,
++	/* without a map, setting the rate dereferences NULL (OnePlus 2: panic) */
++	.parent_map = gcc_xo_gpll0_map,
+ 	.freq_tbl = ftbl_usb3_phy_aux_clk_src,
+ 	.clkr.hw.init = &(struct clk_init_data){
+ 		.name = "usb3_phy_aux_clk_src",

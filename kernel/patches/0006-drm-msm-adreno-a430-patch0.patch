@@ -1,0 +1,21 @@
+From: Matt
+Subject: [PATCH] drm/msm/adreno: accept Adreno 430 patch 0 (MSM8994)
+
+OnePlus 2 bring-up: the OnePlus kernel describes its A430 as chip id
+0x04030000 (kgsl qcom,chipid). Patch levels below 2 need top-level HW clock
+gating off (a4xx_enable_hwcg already does this for adreno_patchid() < 2);
+listing only 0x04030002 forced gating on, which drops register accesses on
+these parts and resets the phone as soon as the GPU runs commands.
+
+---
+--- a/drivers/gpu/drm/msm/adreno/a4xx_catalog.c
++++ b/drivers/gpu/drm/msm/adreno/a4xx_catalog.c
+@@ -33,7 +33,7 @@
+ 		.inactive_period = DRM_MSM_INACTIVE_PERIOD,
+ 		.funcs = &a4xx_gpu_funcs,
+ 	}, {
+-		.chip_ids = ADRENO_CHIP_IDS(0x04030002),
++		.chip_ids = ADRENO_CHIP_IDS(0x04030002, 0x04030000),
+ 		.family = ADRENO_4XX,
+ 		.revn  = 430,
+ 		.fw = {

@@ -1,0 +1,133 @@
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * OnePlus 2 (DTS_DEFINES=OP2_WIFI): Wi-Fi of the QCA6174 combo on PCIe0.
+ *
+ * From the OnePlus kernel (msm8994.dtsi:811-887 pcie0, :3586-3593 cnss):
+ * PARF 0xfc520000, PHY 0xfc526000, DBI 0xff000000, ELBI 0xff000f20, config
+ * 0xff100000, I/O 0xff200000, memory 0xff300000 (13 MiB); MSI SPI 243, INTA-D
+ * SPI 244/245/247/248; PERST GPIO 53, CLKREQ 54 (pci_e0), WAKE 55; supplies
+ * L12 1.8 V + L28 0.9 V, GDSC pcie_0; TZ scm-dev-id 11. The chip itself:
+ * vdd-wlan = PM8994 GPIO 9 (also the BT PA supply), io S4, xtal L30, WL_EN
+ * GPIO 113. Patches 0019 (PHY) and 0020 (controller). Driver: ath10k_pci,
+ * firmware ath10k/QCA6174/hw3.0 from linux-firmware.
+ */
+
+/ {
+#ifndef OP2_BT
+	/* chip power (OnePlus bt_vreg = vdd-wlan), shared with op2-bt.dtsi */
+	bt_pa_vreg: regulator-bt-pa {
+		compatible = "regulator-fixed";
+		regulator-name = "bt_pa";
+		gpio = <&pm8994_gpios 9 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
+		startup-delay-us = <4000>;
+		regulator-always-on;
+	};
+#endif
+};
+
+/* GCC's pcie_0_pipe_clk_src takes the PHY's pipe output (patch 0021) */
+&gcc {
+	clock-names = "xo", "sleep", "pcie_0_pipe";
+	clocks = <&xo_board>, <&sleep_clk>, <&pcie0_phy>;
+};
+
+&tlmm {
+	/* WL_EN: the Wi-Fi half of the chip out of reset */
+	wlan-en-hog {
+		gpio-hog;
+		gpios = <113 GPIO_ACTIVE_HIGH>;
+		output-high;
+		line-name = "wlan-en";
+	};
+
+	pcie0_default: pcie0-default-state {
+		clkreq-pins {
+			pins = "gpio54";
+			function = "pci_e0";
+			drive-strength = <2>;
+			bias-pull-up;
+		};
+		perst-pins {
+			pins = "gpio53";
+			function = "gpio";
+			drive-strength = <2>;
+			bias-pull-down;
+		};
+		wake-pins {
+			pins = "gpio55";
+			function = "gpio";
+			drive-strength = <2>;
+			bias-pull-up;
+		};
+	};
+};
+
+&soc {
+	pcie0_phy: phy@fc526000 {
+		compatible = "qcom,msm8994-pcie-phy";	/* patch 0019 */
+		reg = <0xfc526000 0x1000>;
+		clocks = <&rpmcc RPM_SMD_LN_BB_CLK>,
+			 <&gcc PCIE_0_PHY_LDO>,
+			 <&gcc GCC_PCIE_0_PIPE_CLK>;
+		clock-names = "ref", "ldo", "pipe";
+		resets = <&gcc PCIE_PHY_0_RESET>;
+		reset-names = "phy";
+		/*
+		 * CAF also deasserts PCIE_PHY_0_PHY_BCR (0x1B14, still asserted
+		 * after boot) before the pipe clock. Passing it here as
+		 * <&gcc PCIE_PHY_0_PHY_RESET> "pipe" (patch 0022) reset the
+		 * phone at boot (s63, s64 without ath10k): off until understood.
+		 */
+		vdda-phy-supply = <&pm8994_l28>;
+		vdda-pll-supply = <&pm8994_l12>;
+		#phy-cells = <0>;
+		/* the 125 MHz pipe clock it feeds GCC (patches 0019, 0021) */
+		#clock-cells = <0>;
+		clock-output-names = "pcie_0_pipe_clk";
+	};
+
+	pcie0: pcie@ff000000 {
+		compatible = "qcom,pcie-msm8994";	/* patch 0020 */
+		reg = <0xff000000 0xf1d>,
+		      <0xff000f20 0xa8>,
+		      <0xfc520000 0x2000>,
+		      <0xff100000 0x100000>;
+		reg-names = "dbi", "elbi", "parf", "config";
+		device_type = "pci";
+		linux,pci-domain = <0>;
+		bus-range = <0x00 0xff>;
+		num-lanes = <1>;
+		#address-cells = <3>;
+		#size-cells = <2>;
+		ranges = <0x81000000 0x0 0x0 0xff200000 0x0 0x100000>,
+			 <0x82000000 0x0 0xff300000 0xff300000 0x0 0xd00000>;
+
+		interrupts = <GIC_SPI 243 IRQ_TYPE_LEVEL_HIGH>;
+		interrupt-names = "msi";
+		#interrupt-cells = <1>;
+		interrupt-map-mask = <0 0 0 0x7>;
+		interrupt-map = <0 0 0 1 &intc GIC_SPI 244 IRQ_TYPE_LEVEL_HIGH>,
+				<0 0 0 2 &intc GIC_SPI 245 IRQ_TYPE_LEVEL_HIGH>,
+				<0 0 0 3 &intc GIC_SPI 247 IRQ_TYPE_LEVEL_HIGH>,
+				<0 0 0 4 &intc GIC_SPI 248 IRQ_TYPE_LEVEL_HIGH>;
+
+		clocks = <&gcc GCC_PCIE_0_CFG_AHB_CLK>,
+			 <&gcc GCC_PCIE_0_MSTR_AXI_CLK>,
+			 <&gcc GCC_PCIE_0_SLV_AXI_CLK>,
+			 <&gcc GCC_PCIE_0_AUX_CLK>;
+		clock-names = "iface", "master_bus", "slave_bus", "aux";
+		power-domains = <&gcc PCIE_0_GDSC>;
+		vdda-supply = <&pm8994_l28>;
+
+		phys = <&pcie0_phy>;
+		phy-names = "pciephy";
+
+		perst-gpios = <&tlmm 53 GPIO_ACTIVE_LOW>;
+		wake-gpios = <&tlmm 55 GPIO_ACTIVE_HIGH>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&pcie0_default>;
+
+		qcom,scm-dev-id = <11>;
+	};
+};

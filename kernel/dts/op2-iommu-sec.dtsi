@@ -1,0 +1,40 @@
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * OnePlus 2 (DTS_DEFINES=OP2_SECURE_PTBL): memory for TZ's secure SMMU page
+ * tables, as the CAF kernel hands it over (IOMMU_SECURE_PTBL_INIT) before
+ * any secure config; patch 0015. No-map, so Linux never has a cacheable
+ * alias of pages TZ locks. TZ asked for 151552 bytes (s40 log); below 2 GiB
+ * for the 32-bit TZ call.
+ */
+/ {
+	reserved-memory {
+		iommu_ptbl_mem: iommu-ptbl {
+			compatible = "shared-dma-pool";
+			size = <0x0 0x100000>;		/* 1 MiB: TZ locks it whole (XPU granule?) */
+			alignment = <0x0 0x100000>;
+#ifdef OP2_PTBL_LOW
+			/* s67: at 1 GiB instead of just below 2 GiB (0x7ff00000) */
+			alloc-ranges = <0x0 0x40000000 0x0 0x10000000>;
+#else
+			alloc-ranges = <0x0 0x0 0x0 0x80000000>;
+#endif
+			no-map;
+		};
+	};
+};
+
+/*
+ * Only the GPU SMMU hands the tables over (OP2_SECURE_PTBL_MDP adds the
+ * display one): the display SMMU is live (boot splash scanout) when it probes.
+ */
+#if defined(OP2_DISPLAY) && defined(OP2_SECURE_PTBL_MDP)
+&mdp_iommu {
+	memory-region = <&iommu_ptbl_mem>;
+};
+#endif
+
+#ifdef OP2_GPU
+&gpu_iommu {
+	memory-region = <&iommu_ptbl_mem>;
+};
+#endif

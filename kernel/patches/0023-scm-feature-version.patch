@@ -1,0 +1,60 @@
+diff -ruN a/drivers/firmware/qcom/qcom_scm.c b/drivers/firmware/qcom/qcom_scm.c
+--- a/drivers/firmware/qcom/qcom_scm.c	2026-10-27 15:37:07.073240820 +0100
++++ b/drivers/firmware/qcom/qcom_scm.c	2026-10-27 15:37:07.094018935 +0100
+@@ -1294,6 +1294,34 @@
+ }
+ EXPORT_SYMBOL_GPL(qcom_scm_iommu_set_cp_pool_size);
+ 
++/*
++ * The version TZ reports for one of its features (a service id, e.g.
++ * QCOM_SCM_SVC_MP): major << 22 | minor << 12 | patch, as the CAF kernel's
++ * scm_get_feat_version() (OnePlus 2: CAF sets the content-protection pool
++ * size only from MP 1.1.1 on).
++ */
++int qcom_scm_get_feat_version(u32 feat, u64 *version)
++{
++	struct qcom_scm_desc desc = {
++		.svc = QCOM_SCM_SVC_INFO,
++		.cmd = QCOM_SCM_INFO_GET_FEAT_VERSION,
++		.arginfo = QCOM_SCM_ARGS(1),
++		.args[0] = feat,
++		.owner = ARM_SMCCC_OWNER_SIP,
++	};
++	struct qcom_scm_res res;
++	int ret;
++
++	if (!__qcom_scm_is_call_available(__scm->dev, QCOM_SCM_SVC_INFO,
++					  QCOM_SCM_INFO_GET_FEAT_VERSION))
++		return -EOPNOTSUPP;
++	ret = qcom_scm_call(__scm->dev, &desc, &res);
++	if (!ret)
++		*version = res.result[0];
++	return ret;
++}
++EXPORT_SYMBOL_GPL(qcom_scm_get_feat_version);
++
+ int qcom_scm_mem_protect_video_var(u32 cp_start, u32 cp_size,
+ 				   u32 cp_nonpixel_start,
+ 				   u32 cp_nonpixel_size)
+diff -ruN a/drivers/firmware/qcom/qcom_scm.h b/drivers/firmware/qcom/qcom_scm.h
+--- a/drivers/firmware/qcom/qcom_scm.h	2026-10-27 15:37:07.077825194 +0100
++++ b/drivers/firmware/qcom/qcom_scm.h	2026-10-27 15:37:07.093691019 +0100
+@@ -113,6 +113,7 @@
+ 
+ #define QCOM_SCM_SVC_INFO		0x06
+ #define QCOM_SCM_INFO_IS_CALL_AVAIL	0x01
++#define QCOM_SCM_INFO_GET_FEAT_VERSION	0x03
+ 
+ #define QCOM_SCM_SVC_MP				0x0c
+ #define QCOM_SCM_MP_RESTORE_SEC_CFG		0x02
+diff -ruN a/include/linux/firmware/qcom/qcom_scm.h b/include/linux/firmware/qcom/qcom_scm.h
+--- a/include/linux/firmware/qcom/qcom_scm.h	2026-10-27 15:37:07.082162941 +0100
++++ b/include/linux/firmware/qcom/qcom_scm.h	2026-10-27 15:37:07.093742489 +0100
+@@ -105,6 +105,7 @@
+ int qcom_scm_iommu_secure_ptbl_size(u32 spare, size_t *size);
+ int qcom_scm_iommu_secure_ptbl_init(u64 addr, u32 size, u32 spare);
+ int qcom_scm_iommu_set_cp_pool_size(u32 spare, u32 size);
++int qcom_scm_get_feat_version(u32 feat, u64 *version);
+ int qcom_scm_mem_protect_video_var(u32 cp_start, u32 cp_size,
+ 				   u32 cp_nonpixel_start, u32 cp_nonpixel_size);
+ int qcom_scm_assign_mem(phys_addr_t mem_addr, size_t mem_sz, u64 *src,

@@ -1,0 +1,24 @@
+diff -ruN a/drivers/clk/qcom/gcc-msm8994.c b/drivers/clk/qcom/gcc-msm8994.c
+--- a/drivers/clk/qcom/gcc-msm8994.c	2026-10-27 14:40:29.650461988 +0100
++++ b/drivers/clk/qcom/gcc-msm8994.c	2026-10-27 14:40:29.666141855 +0100
+@@ -2650,6 +2650,9 @@
+ 	[MSS_RESET] = { 0x1680 },
+ 	[PCIE_PHY_0_RESET] = { 0x1b18 },
+ 	[PCIE_PHY_1_RESET] = { 0x1b98 },
++	/* the PHYs' pipe side (CAF PCIE_PHY_n_PHY_BCR, the pipe clocks' BCR) */
++	[PCIE_PHY_0_PHY_RESET] = { 0x1b14 },
++	[PCIE_PHY_1_PHY_RESET] = { 0x1b94 },
+ 	[QUSB2_PHY_RESET] = { 0x04b8 },
+ };
+ 
+diff -ruN a/include/dt-bindings/clock/qcom,gcc-msm8994.h b/include/dt-bindings/clock/qcom,gcc-msm8994.h
+--- a/include/dt-bindings/clock/qcom,gcc-msm8994.h	2026-10-27 14:40:29.646290998 +0100
++++ b/include/dt-bindings/clock/qcom,gcc-msm8994.h	2026-10-27 14:40:29.665894029 +0100
+@@ -175,5 +175,7 @@
+ #define PCIE_PHY_1_RESET		3
+ #define QUSB2_PHY_RESET			4
+ #define MSS_RESET				5
++#define PCIE_PHY_0_PHY_RESET		6
++#define PCIE_PHY_1_PHY_RESET		7
+ 
+ #endif

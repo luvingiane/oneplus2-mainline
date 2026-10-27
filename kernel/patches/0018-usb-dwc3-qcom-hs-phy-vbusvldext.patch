@@ -1,0 +1,77 @@
+From: Matt
+Subject: [PATCH] usb: dwc3: qcom: also tell the HS PHY that VBUS is valid
+
+OnePlus 2 bring-up (MSM8994): QSCRATCH_HS_PHY_CTRL has VBUSVLDEXTSEL0 (bit
+14) set, so the HS PHY takes VBUS from VBUSVLDEXT0 (bit 13; names from CAF
+phy-msm-hsusb.c). LK sets bit 13 in fastboot; after a normal boot it is 0,
+the PHY sees no VBUS, never pulls D+ up and the host sees nothing (UDC "not
+attached"). Set it together with the controller's VBUS override, in the
+legacy glue that MSM8994 binds (qcom,dwc3 with a dwc3 child node).
+
+v2: also REF_SS_PHY_EN (SS_PHY_CTRL bit 8), set by LK for fastboot boots and off after a normal boot.
+v3: qcom,deassert-only-resets: release the listed resets without asserting them first.
+---
+--- a/drivers/usb/dwc3/dwc3-qcom-legacy.c	2026-10-27 15:54:46.829941392 +0100
++++ b/drivers/usb/dwc3/dwc3-qcom-legacy.c	2026-10-27 19:00:05.178003002 +0100
+@@ -28,9 +28,14 @@
+ #define QSCRATCH_HS_PHY_CTRL			0x10
+ #define UTMI_OTG_VBUS_VALID			BIT(20)
+ #define SW_SESSVLD_SEL				BIT(28)
++/* external VBUS valid input of the HS PHY (CAF phy-msm-hsusb.c VBUSVLDEXT0) */
++#define VBUSVLDEXT0				BIT(13)
+ 
+ #define QSCRATCH_SS_PHY_CTRL			0x30
+ #define LANE0_PWR_PRESENT			BIT(24)
++/* SS PHY reference clock on (CAF phy-msm-ssusb.c:245; the bootloader sets it
++ * for fastboot, after a normal boot it is off and the link stays suspended) */
++#define REF_SS_PHY_EN				BIT(8)
+ 
+ #define QSCRATCH_GENERAL_CFG			0x08
+ #define PIPE_UTMI_CLK_SEL			BIT(0)
+@@ -120,14 +125,14 @@
+ {
+ 	if (enable) {
+ 		dwc3_qcom_setbits(qcom->qscratch_base, QSCRATCH_SS_PHY_CTRL,
+-				  LANE0_PWR_PRESENT);
++				  LANE0_PWR_PRESENT | REF_SS_PHY_EN);
+ 		dwc3_qcom_setbits(qcom->qscratch_base, QSCRATCH_HS_PHY_CTRL,
+-				  UTMI_OTG_VBUS_VALID | SW_SESSVLD_SEL);
++				  UTMI_OTG_VBUS_VALID | SW_SESSVLD_SEL | VBUSVLDEXT0);
+ 	} else {
+ 		dwc3_qcom_clrbits(qcom->qscratch_base, QSCRATCH_SS_PHY_CTRL,
+-				  LANE0_PWR_PRESENT);
++				  LANE0_PWR_PRESENT | REF_SS_PHY_EN);
+ 		dwc3_qcom_clrbits(qcom->qscratch_base, QSCRATCH_HS_PHY_CTRL,
+-				  UTMI_OTG_VBUS_VALID | SW_SESSVLD_SEL);
++				  UTMI_OTG_VBUS_VALID | SW_SESSVLD_SEL | VBUSVLDEXT0);
+ 	}
+ }
+ 
+@@ -752,13 +757,21 @@
+ 				     "failed to get resets\n");
+ 	}
+ 
+-	ret = reset_control_assert(qcom->resets);
+-	if (ret) {
+-		dev_err(&pdev->dev, "failed to assert resets, err=%d\n", ret);
+-		return ret;
+-	}
++	/*
++	 * OnePlus 2: the resets listed here include the USB3 PHY's, which LK
++	 * releases for fastboot and leaves asserted otherwise; asserting them
++	 * again would undo LK's PHY set-up that no driver redoes, so with
++	 * qcom,deassert-only-resets they are only released.
++	 */
++	if (!of_property_read_bool(np, "qcom,deassert-only-resets")) {
++		ret = reset_control_assert(qcom->resets);
++		if (ret) {
++			dev_err(&pdev->dev, "failed to assert resets, err=%d\n", ret);
++			return ret;
++		}
+ 
+-	usleep_range(10, 1000);
++		usleep_range(10, 1000);
++	}
+ 
+ 	ret = reset_control_deassert(qcom->resets);
+ 	if (ret) {

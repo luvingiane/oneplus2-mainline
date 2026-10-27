@@ -1,0 +1,50 @@
+From: Matt
+Subject: [PATCH] arm64: cpufeature: optionally accept late CPUs with extra capabilities
+
+OnePlus 2 bring-up: the A57 cluster comes up only after boot and needs
+Spectre-v2 handling the A53-only system did not enable; mainline refuses
+it. arm64.late_cpu_conflicts=warn lets such a CPU in with a warning
+(no mitigation on it: acceptable for this device, not for upstream).
+
+---
+--- a/arch/arm64/kernel/cpufeature.c
++++ b/arch/arm64/kernel/cpufeature.c
+@@ -3681,6 +3681,22 @@
+  * If the system has already detected a capability, take necessary
+  * action on this CPU.
+  */
++/*
++ * OnePlus 2 bring-up: the A57 cluster can only be brought up after boot (no
++ * PSCI; the SCM boot address call needs the SCM device), when the
++ * system-wide capabilities were already decided by the A53 cluster. With
++ * "arm64.late_cpu_conflicts=warn" such a late CPU that needs a capability the
++ * system lacks (e.g. Spectre-v2 mitigation) is allowed in with a warning.
++ */
++static bool late_cpu_conflicts_warn;
++
++static int __init parse_late_cpu_conflicts(char *str)
++{
++	late_cpu_conflicts_warn = str && !strcmp(str, "warn");
++	return 0;
++}
++early_param("arm64.late_cpu_conflicts", parse_late_cpu_conflicts);
++
+ static void verify_local_cpu_caps(u16 scope_mask)
+ {
+ 	int i;
+@@ -3717,8 +3733,14 @@
+ 			 * Check if the CPU has this capability if it isn't
+ 			 * safe to have when the system doesn't.
+ 			 */
+-			if (cpu_has_cap && !cpucap_late_cpu_permitted(caps))
++			if (cpu_has_cap && !cpucap_late_cpu_permitted(caps)) {
++				if (late_cpu_conflicts_warn) {
++					pr_warn("CPU%d: capability %d (%s) not enabled system-wide, CPU runs without it\n",
++						smp_processor_id(), caps->capability, caps->desc);
++					continue;
++				}
+ 				break;
++			}
+ 		}
+ 	}
+ 

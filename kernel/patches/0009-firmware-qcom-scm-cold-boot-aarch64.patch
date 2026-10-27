@@ -1,0 +1,43 @@
+From: Matt
+Subject: [PATCH] firmware: qcom: scm: cold boot address in AArch64 state
+
+OnePlus 2 bring-up: qcom_scm_set_cold_boot_addr() passes only COLDBOOT
+in the multi-cluster call, so on MSM8994 (arm64 kernel, no PSCI) the
+secondary cores start in AArch32 at a 64-bit entry and never reach the
+kernel. The OnePlus kernel always adds the HLOS/AArch64 flag (BIT(0)).
+
+---
+--- a/drivers/firmware/qcom/qcom_scm.c
++++ b/drivers/firmware/qcom/qcom_scm.c
+@@ -475,6 +475,21 @@
+ EXPORT_SYMBOL_GPL(qcom_scm_set_cold_boot_addr);
+ 
+ /**
++ * qcom_scm_set_cold_boot_addr_aarch64() - Set the cold boot address for all
++ * cpus, to be entered in AArch64 state (multi-cluster call only)
++ * @entry: Entry point function for the cpus
++ *
++ * For arm64 kernels on firmware without PSCI (MSM8994): without the AArch64
++ * flag the secondary cores start in AArch32 state.
++ */
++int qcom_scm_set_cold_boot_addr_aarch64(void *entry)
++{
++	return qcom_scm_set_boot_addr_mc(entry, QCOM_SCM_BOOT_MC_FLAG_COLDBOOT |
++					 QCOM_SCM_BOOT_MC_FLAG_AARCH64);
++}
++EXPORT_SYMBOL_GPL(qcom_scm_set_cold_boot_addr_aarch64);
++
++/**
+  * qcom_scm_cpu_power_down() - Power down the cpu
+  * @flags:	Flags to flush cache
+  *
+--- a/include/linux/firmware/qcom/qcom_scm.h
++++ b/include/linux/firmware/qcom/qcom_scm.h
+@@ -62,6 +62,7 @@
+ bool qcom_scm_is_available(void);
+ 
+ int qcom_scm_set_cold_boot_addr(void *entry);
++int qcom_scm_set_cold_boot_addr_aarch64(void *entry);
+ int qcom_scm_set_warm_boot_addr(void *entry);
+ void qcom_scm_cpu_power_down(u32 flags);
+ int qcom_scm_set_remote_state(u32 state, u32 id);

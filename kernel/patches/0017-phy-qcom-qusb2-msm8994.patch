@@ -1,0 +1,83 @@
+From: Matt
+Subject: [PATCH] phy: qcom-qusb2: add MSM8994
+
+OnePlus 2 bring-up: MSM8994 has the first-generation QUSB2 of msm8996 but a
+differential reference clock and no usable PLL lock bit (PLL_STATUS reads 0
+on a working PHY). The init values are those LK leaves when USB works,
+read back from a phone. Without this, USB works only when LK set the PHY up
+(fastboot boot).
+---
+--- a/drivers/phy/qualcomm/phy-qcom-qusb2.c	2026-10-27 09:18:26.596401266 +0100
++++ b/drivers/phy/qualcomm/phy-qcom-qusb2.c	2026-10-27 09:18:26.607881566 +0100
+@@ -219,6 +219,28 @@
+ 	[QUSB2PHY_INTR_CTRL]               = 0x22c,
+ };
+ 
++/*
++ * MSM8994 (OnePlus 2): the values LK leaves when USB works (fastboot), read
++ * back on a phone with devmem; MSM8994's first-generation QUSB2 has the
++ * msm8996 register layout.
++ */
++static const struct qusb2_phy_init_tbl msm8994_init_tbl[] = {
++	QUSB2_PHY_INIT_CFG_L(QUSB2PHY_PORT_TUNE1, 0x24),
++	QUSB2_PHY_INIT_CFG_L(QUSB2PHY_PORT_TUNE2, 0xc5),
++	QUSB2_PHY_INIT_CFG_L(QUSB2PHY_PORT_TUNE3, 0x01),
++	QUSB2_PHY_INIT_CFG_L(QUSB2PHY_PORT_TUNE4, 0x10),
++	QUSB2_PHY_INIT_CFG_L(QUSB2PHY_PORT_TUNE5, 0x00),
++
++	QUSB2_PHY_INIT_CFG(QUSB2PHY_PLL_TUNE, 0x00),
++	QUSB2_PHY_INIT_CFG(QUSB2PHY_PLL_USER_CTL1, 0xf9),
++	QUSB2_PHY_INIT_CFG(QUSB2PHY_PLL_USER_CTL2, 0x20),
++
++	QUSB2_PHY_INIT_CFG_L(QUSB2PHY_PORT_TEST2, 0x08),
++
++	QUSB2_PHY_INIT_CFG(QUSB2PHY_PLL_AUTOPGM_CTL1, 0x95),
++	QUSB2_PHY_INIT_CFG(QUSB2PHY_PLL_PWR_CTRL, 0x10),
++};
++
+ static const struct qusb2_phy_init_tbl msm8998_init_tbl[] = {
+ 	QUSB2_PHY_INIT_CFG(QUSB2PHY_PLL_ANALOG_CONTROLS_TWO, 0x13),
+ 	QUSB2_PHY_INIT_CFG(QUSB2PHY_PLL_CLOCK_INVERTERS, 0x7c),
+@@ -320,6 +342,23 @@
+ 	.autoresume_en	 = BIT(3),
+ };
+ 
++/*
++ * MSM8994: differential reference clock (PLL_TEST reads 0 on a working PHY,
++ * so not the single-ended scheme of msm8996), and PLL_STATUS reads 0 even
++ * with USB up, so there is no lock bit to wait for (mask 0).
++ */
++static const struct qusb2_phy_cfg msm8994_phy_cfg = {
++	.tbl		= msm8994_init_tbl,
++	.tbl_num	= ARRAY_SIZE(msm8994_init_tbl),
++	.regs		= msm8996_regs_layout,
++
++	.has_pll_test	= true,
++	.se_clk_scheme_default = false,
++	.disable_ctrl	= (CLAMP_N_EN | FREEZIO_N | POWER_DOWN),
++	.mask_core_ready = 0,
++	.autoresume_en	 = BIT(3),
++};
++
+ static const struct qusb2_phy_cfg msm8998_phy_cfg = {
+ 	.tbl            = msm8998_init_tbl,
+ 	.tbl_num        = ARRAY_SIZE(msm8998_init_tbl),
+@@ -883,7 +922,7 @@
+ 	usleep_range(100, 110);
+ 
+ 	val = readb(qphy->base + cfg->regs[QUSB2PHY_PLL_STATUS]);
+-	if (!(val & cfg->mask_core_ready)) {
++	if (cfg->mask_core_ready && !(val & cfg->mask_core_ready)) {
+ 		dev_err(&phy->dev,
+ 			"QUSB2PHY pll lock failed: status reg = %x\n", val);
+ 		ret = -EBUSY;
+@@ -955,6 +994,9 @@
+ 		.compatible	= "qcom,msm8953-qusb2-phy",
+ 		.data		= &msm8996_phy_cfg,
+ 	}, {
++		.compatible	= "qcom,msm8994-qusb2-phy",
++		.data		= &msm8994_phy_cfg,
++	}, {
+ 		.compatible	= "qcom,msm8996-qusb2-phy",
+ 		.data		= &msm8996_phy_cfg,
+ 	}, {
