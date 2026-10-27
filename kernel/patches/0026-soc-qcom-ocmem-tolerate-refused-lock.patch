@@ -1,0 +1,30 @@
+From: Matt
+Subject: [PATCH] soc: qcom: ocmem: go on when TZ refuses the lock
+
+MSM8994 (OnePlus 2): qcom_scm_ocmem_lock() returns -EIO and mainline gave
+up on the GPU's GMEM. Writing the GFX MPU window instead is no option
+there: those registers are secure and the write resets the phone. Warn and
+keep the allocation.
+---
+diff -ruN a/drivers/soc/qcom/ocmem.c b/drivers/soc/qcom/ocmem.c
+--- a/drivers/soc/qcom/ocmem.c	2026-10-27 20:31:45.665703810 +0100
++++ b/drivers/soc/qcom/ocmem.c	2026-10-27 20:34:36.231218389 +0100
+@@ -241,11 +241,13 @@
+ 	if (qcom_scm_ocmem_lock_available()) {
+ 		ret = qcom_scm_ocmem_lock(QCOM_SCM_OCMEM_GRAPHICS_ID,
+ 					  buf->offset, buf->len, WIDE_MODE);
+-		if (ret) {
+-			dev_err(ocmem->dev, "could not lock: %d\n", ret);
+-			ret = -EINVAL;
+-			goto err_unlock;
+-		}
++		/*
++		 * MSM8994 (OnePlus 2): TZ answers -EIO, and the GFX MPU
++		 * registers are secure there (writing them resets the phone);
++		 * go on with the range as is.
++		 */
++		if (ret)
++			dev_warn(ocmem->dev, "TZ lock refused (%d), going on unlocked\n", ret);
+ 	} else {
+ 		ocmem_write(ocmem, OCMEM_REG_GFX_MPU_START, buf->offset);
+ 		ocmem_write(ocmem, OCMEM_REG_GFX_MPU_END,

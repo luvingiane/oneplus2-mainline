@@ -1,0 +1,28 @@
+# JD35695 on-sequence, from downstream dsi-panel-jd35695-1080p-cmd.dtsi
+# (qcom,mdss-dsi-on-command, LP mode); format: dtype wait_ms bytes
+lp
+15   0 ff 10
+15   0 35 00
+39   0 2a 00 00 04 37
+39   0 2b 00 00 07 7f
+29   0 44 05 00
+15   0 ff e0
+15   0 b5 86
+15   0 b6 77
+15   0 b8 ad
+15   0 fb 01
+15   0 ff 10
+15   0 36 03
+15   0 ff 23
+15   0 08 03
+15   0 ff 10
+15   0 51 ff
+15   0 53 2c
+15   0 55 02
+15   0 ff 23
+15   0 fb 01
+15   0 05 24
+15   0 01 84
+15   0 ff 10
+05 100 11 00
+05  17 29 00

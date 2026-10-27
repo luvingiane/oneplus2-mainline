@@ -1,0 +1,53 @@
+From: Matt
+Subject: [PATCH] power: reset: qcom-pon: optionally clear the reboot reason at boot
+
+OnePlus 2 bring-up: the reboot reason written for "reboot bootloader" or
+"reboot recovery" stays in PON_SOFT_RB_SPARE, and the bootloader reads it
+again on every later reboot, so a plain reboot after a "reboot recovery"
+lands in recovery. reboot-mode cannot write a "normal" magic of 0. With
+"qcom,clear-reboot-reason" the driver clears the field at probe, when the
+bootloader has already acted on it.
+Also, for bring-up test images only ("op2.crash=fastboot" on the command
+line), set the reason to bootloader at probe, so any later reset lands in
+fastboot instead of the system on flash.
+---
+--- a/drivers/power/reset/qcom-pon.c	2026-10-27 19:47:11.954965224 +0100
++++ b/drivers/power/reset/qcom-pon.c	2026-10-27 19:47:11.960377278 +0100
+@@ -4,6 +4,7 @@
+ #include <linux/delay.h>
+ #include <linux/errno.h>
+ #include <linux/kernel.h>
++#include <linux/init.h>
+ #include <linux/module.h>
+ #include <linux/of.h>
+ #include <linux/of_platform.h>
+@@ -78,6 +79,29 @@
+ 			dev_err(&pdev->dev, "can't register reboot mode\n");
+ 			return error;
+ 		}
++		if (of_property_read_bool(pdev->dev.of_node, "qcom,clear-reboot-reason")) {
++			unsigned int old = 0;
++
++			regmap_read(pon->regmap, pon->baseaddr + PON_SOFT_RB_SPARE, &old);
++			regmap_update_bits(pon->regmap,
++					   pon->baseaddr + PON_SOFT_RB_SPARE,
++					   GENMASK(7, pon->reason_shift), 0);
++			dev_info(&pdev->dev, "reboot reason %#x cleared\n",
++				 (old & GENMASK(7, pon->reason_shift)) >> pon->reason_shift);
++		}
++		/*
++		 * Bring-up test images ("op2.crash=fastboot"): from here on, any
++		 * reset (a crash, a TZ/XPU violation) lands in fastboot, where USB
++		 * works, instead of the system on flash
++		 */
++		if (strstr(saved_command_line, "op2.crash=fastboot")) {
++			u32 bl;
++
++			if (!of_property_read_u32(pdev->dev.of_node, "mode-bootloader", &bl)) {
++				pon->reboot_mode.write(&pon->reboot_mode, bl);
++				dev_info(&pdev->dev, "test image: reboot reason set to bootloader\n");
++			}
++		}
+ 	}
+ 
+ 	platform_set_drvdata(pdev, pon);

@@ -1,0 +1,221 @@
+#!/bin/sh
+# op2boot: test boot stage for the OnePlus 2 on a mainline kernel.
+# Booted with `fastboot boot` (RAM only): nothing here writes to the eMMC.
+#
+# What it gives:
+#   - USB: NCM network (phone 172.16.42.1, computer 172.16.42.2) with telnetd,
+#     plus an ACM serial console (/dev/ttyACM0 on the computer)
+#   - a report in /run/op2boot.log and the kernel log (kept in pstore too)
+#   - a display check: MDP registers (is the panel still scanning out the
+#     splash buffer?) and a test pattern on /dev/fb0
+#   - a hardware watchdog (a hung kernel resets the phone) and a deadman
+#     reset after op2.deadman=N seconds (default 900) unless /run/hold exists,
+#     so an unattended test always ends back in the phone's normal boot
+export PATH=/bin:/sbin:/usr/bin:/usr/sbin
+/bin/busybox --install -s /bin 2>/dev/null
+mkdir -p /proc /sys /dev /run /tmp
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mount -t devtmpfs devtmpfs /dev 2>/dev/null
+mount -t tmpfs -o mode=755 tmpfs /run
+mkdir -p /dev/pts && mount -t devpts devpts /dev/pts
+mount -t configfs configfs /sys/kernel/config
+mount -t pstore pstore /sys/fs/pstore 2>/dev/null
+echo 1 > /proc/sys/kernel/sysrq
+# visible signal: our init runs -> blue LED on, backlight blinks 3 times
+led() { echo "$2" > /sys/class/leds/op2:$1/brightness 2>/dev/null; }
+led blue 255
+for b in /sys/class/backlight/*; do
+	[ -e "$b/brightness" ] || continue
+	v=$(cat $b/brightness)
+	for i in 1 2 3; do echo 0 > $b/brightness; sleep 0.5; echo ${v:-2048} > $b/brightness; sleep 0.5; done
+done
+
+# first thing: any reset from here on (watchdog, panic) lands in fastboot,
+# not in Android, so the RAM log survives and USB stays reachable
+devmem 0xfe87f65c 32 0x77665500
+
+LOG=/run/op2boot.log
+log() { echo "op2boot| $*" > /dev/kmsg; echo "$(cut -d' ' -f1 /proc/uptime) $*" >> $LOG; }
+arg() { sed -n "s/.*\b$1=\([^ ]*\).*/\1/p" /proc/cmdline; }
+
+# back to the bootloader's fastboot mode: LK (msm8994) reads the restart
+# reason from shared IMEM 0xfe87f65c; 0x77665500 = fastboot. `reboot -f` (not
+# sysrq) so the reboot notifiers run and the PMIC does a warm reset, which
+# keeps IMEM.
+to_fastboot() {
+	log "to fastboot: $*"; sync
+	devmem 0xfe87f65c 32 0x77665500
+	reboot -f
+	echo b > /proc/sysrq-trigger
+}
+
+log "leds: $(ls /sys/class/leds | tr '\n' ' ') backlight: $(ls /sys/class/backlight | tr '\n' ' ')"
+log "===== op2boot on $(uname -r), $(cat /proc/device-tree/model) ====="
+log "cmdline: $(cat /proc/cmdline)"
+log "cpus online: $(cat /sys/devices/system/cpu/online)  mem: $(awk '/MemTotal/{print $2" kB"}' /proc/meminfo)"
+log "board-id: $(od -An -tu4 /proc/device-tree/qcom,board-id 2>/dev/null)"
+ls /sys/fs/pstore/ 2>/dev/null | grep -q . && log "pstore from the previous boot: $(ls /sys/fs/pstore | tr '\n' ' ')"
+
+PROBE=$(arg op2.probe)
+STOP=$(arg op2.stop)
+stop_at() { [ "$STOP" = "$1" ] && { sleep 5; to_fastboot "stop=$1 reached"; }; }
+[ "$PROBE" = early ] && { sleep 2; to_fastboot "probe=early: userspace reached"; }
+
+# --- watchdog + deadman ------------------------------------------------------
+# Starting the APSS watchdog (qcom_wdt, 0xf9017000) hangs this phone for
+# good (bisect: op2.stop=wd never came back); off unless op2.wdt=1.
+if [ "$(arg op2.wdt)" = 1 ] && [ -c /dev/watchdog ]; then watchdog -t 5 -T 30 /dev/watchdog && log "watchdog: armed (30 s)"
+else log "watchdog: not started"; fi
+stop_at wd
+DEADMAN=$(arg op2.deadman); DEADMAN=${DEADMAN:-900}
+if [ "$DEADMAN" -gt 0 ] 2>/dev/null; then
+	( sleep "$DEADMAN"; [ -e /run/hold ] && exit 0
+	  to_fastboot "deadman" ) &
+	log "deadman: reboot in $DEADMAN s unless /run/hold exists"
+fi
+
+# --- screen: keep the command-mode panel showing fb0 (tools/op2-kick) ---------
+if [ "$(arg op2.kick)" != 0 ]; then
+	for i in $(seq 1 20); do [ -c /dev/fb0 ] && break; sleep 0.2; done
+	[ -c /dev/fb0 ] && /bin/op2-kick 30 & log "op2-kick: started (fb0: $([ -c /dev/fb0 ] && echo yes || echo no))"
+fi
+
+# --- USB gadget: NCM + ACM ---------------------------------------------------
+# Per-phone network, so both phones can be on the computer at once:
+# B (target) 172.16.42.x, A (broken screen, helper agents) 172.16.44.x.
+SERIAL=$(arg androidboot.serialno)
+case "$SERIAL" in
+SECOND_PHONE_SERIAL) NET=44; MACID=0a ;;
+*)        NET=42; MACID=0b ;;
+esac
+PHONE_IP=172.16.$NET.1; HOST_IP=172.16.$NET.2
+
+usb_up() {
+	G=/sys/kernel/config/usb_gadget/op2
+	udc=$(ls /sys/class/udc 2>/dev/null | head -1)
+	[ -n "$udc" ] || return 1
+	mkdir -p $G/strings/0x409 $G/functions/ncm.usb0 $G/functions/acm.GS0 $G/configs/c.1/strings/0x409
+	echo 0x18d1 > $G/idVendor; echo 0xd001 > $G/idProduct
+	echo "OnePlus" > $G/strings/0x409/manufacturer
+	echo "OnePlus 2 op2boot" > $G/strings/0x409/product
+	echo "op2boot" > $G/strings/0x409/serialnumber
+	echo "NCM + ACM" > $G/configs/c.1/strings/0x409/configuration
+	# fixed MACs, so the computer sees the same interface every boot
+	echo 02:00:00:$MACID:02:01 > $G/functions/ncm.usb0/dev_addr
+	echo 02:00:00:$MACID:02:02 > $G/functions/ncm.usb0/host_addr
+	ln -s $G/functions/ncm.usb0 $G/configs/c.1/ 2>/dev/null
+	ln -s $G/functions/acm.GS0 $G/configs/c.1/ 2>/dev/null
+	log "usb: gadget built, udc=$udc"
+	stop_at gadget
+	echo "$udc" > $G/UDC || return 1
+	log "usb: gadget on $udc"; led green 255
+	stop_at udc
+	return 0
+}
+for i in $(seq 1 20); do usb_up && break; sleep 1; done
+ip link set lo up
+for i in $(seq 1 10); do ip link show usb0 >/dev/null 2>&1 && break; sleep 1; done
+ip addr add $PHONE_IP/24 dev usb0 && ip link set usb0 up && log "usb0: $PHONE_IP ($SERIAL)"
+# the computer gets $HOST_IP by DHCP (NetworkManager does it by itself)
+mkdir -p /var/lib/misc && touch /var/lib/misc/udhcpd.leases
+cat > /etc/udhcpd.conf <<EOF
+start $HOST_IP
+end $HOST_IP
+interface usb0
+max_leases 1
+option subnet 255.255.255.0
+option lease 3600
+EOF
+udhcpd /etc/udhcpd.conf && log "udhcpd: offering $HOST_IP"
+telnetd -l /bin/sh && log "telnetd: port 23"
+# ssh with the key in keys/ (no passwords); host keys made at first use
+HOME=/root dropbear -R -E -p 22 2>>/run/dropbear.log && log "dropbear: ssh on port 22 (key only)"
+( while true; do [ -c /dev/ttyGS0 ] && setsid sh -c 'exec sh </dev/ttyGS0 >/dev/ttyGS0 2>&1'; sleep 1; done ) &
+
+# --- display check -----------------------------------------------------------
+# Offsets from MDSS base 0xfd900000 (downstream msm8994-mdss.dtsi):
+# INTF1 (DSI0) 0x6b800, INTF2 (DSI1) 0x6c000: +0x0 TIMING_ENGINE_EN.
+# Pipes RGB0..3 0x15000.., VIG0..3 0x5000.., DMA0..1 0x25000..:
+# +0x14 SRC0_ADDR, +0x24 SRC_STRIDE_A, +0x0 SRC_SIZE.
+# Read only while simpledrm holds the MDSS clocks: with them off, a read hangs.
+rd() { devmem $(printf '0x%x' $((0xfd900000 + $1))) 32 2>&1; }
+if [ -c /dev/fb0 ] && [ "$(arg op2.mdp)" = 1 ]; then
+	log "fb0: $(cat /sys/class/graphics/fb0/name) $(cat /sys/class/graphics/fb0/virtual_size) bpp=$(cat /sys/class/graphics/fb0/bits_per_pixel)"
+	log "mdp: INTF1 tg_en=$(rd 0x6b800) INTF2 tg_en=$(rd 0x6c000)"
+	for p in 0x15000 0x17000 0x19000 0x1b000 0x5000 0x7000 0x25000; do
+		log "mdp: pipe $p src0=$(rd $((p + 0x14))) stride=$(rd $((p + 0x24))) size=$(rd $p)"
+	done
+	# test pattern: red/green/blue bands with a white border, built on the
+	# computer (scripts/build-boot.sh) for 24 and 32 bpp
+	bpp=$(cat /sys/class/graphics/fb0/bits_per_pixel)
+	[ -f /pattern$bpp.raw.gz ] && zcat /pattern$bpp.raw.gz > /dev/fb0 2>/dev/null
+	log "fb0: test pattern ($bpp bpp) written: red/green/blue bands, white border"
+	# This phone's panel (jd35695) is a command-mode panel: it keeps its own
+	# copy of the picture and only takes a new frame when the MDP is told to
+	# send one (CTL_START, +0x1c of the CTL in use; CTLs at 0x2000 + n*0x200,
+	# CTL_TOP at +0x14 says which one the bootloader set up).
+	for n in 0 1 2 3 4; do
+		c=$((0x2000 + n * 0x200)); top=$(rd $((c + 0x14)))
+		log "mdp: ctl$n top=$top"
+		[ "$top" != 0x00000000 ] && [ -z "${CTL:-}" ] && CTL=$c
+	done
+	if [ -n "${CTL:-}" ] && [ "$(arg op2.kick)" != 0 ]; then
+		devmem $(printf '0x%x' $((0xfd900000 + CTL + 0x1c))) 32 1
+		log "mdp: frame kicked on ctl at +$(printf 0x%x $CTL); kicking once a second for 60 s"
+		( i=0; while [ $i -lt 60 ]; do sleep 1; devmem $(printf '0x%x' $((0xfd900000 + CTL + 0x1c))) 32 1; i=$((i+1)); done ) &
+	fi
+elif [ -c /dev/fb0 ]; then
+	log "fb0: $(cat /sys/class/graphics/fb0/name) $(cat /sys/class/graphics/fb0/virtual_size) bpp=$(cat /sys/class/graphics/fb0/bits_per_pixel) (MDP check off: op2.mdp=1 to run it)"
+else
+	log "fb0: missing — no display check"
+fi
+
+[ "$PROBE" = usb ] && ( sleep 45; [ -e /run/hold ] || to_fastboot "probe=usb: 45 s with USB up" ) &
+
+# touch feedback: green LED while a finger is down (tools/op2-touchled)
+led green 0; led blue 0
+# key feedback: LED colour per key and alert-slider position (tools/op2-keyled)
+setsid sh -c "/bin/op2-keyled > /run/keyled.log 2>&1" </dev/null >/dev/null 2>&1 &
+setsid sh -c "/bin/op2-touchled > /run/touchled.log 2>&1" </dev/null >/dev/null 2>&1 &
+
+# Secondary cores (kernel patches 0009/0010, DTS OP2_SMP): the kernel's own
+# attempt at boot comes before SCM is up and fails; bring them up here.
+[ "$(arg op2.smp)" = 0 ] || for c in /sys/devices/system/cpu/cpu[1-9]*; do
+	[ -w $c/online ] && [ "$(cat $c/online)" = 0 ] && echo 1 > $c/online 2>/dev/null
+done
+log "secondary cores: online $(cat /sys/devices/system/cpu/online)"
+
+# op2.root=<block device>: hand over to the system on that ext4 partition
+# (ztOS: Arch Linux ARM + systemd). The USB gadget stays as configured here;
+# the system gives usb0 172.16.42.1 itself. IMEM still says "fastboot", so
+# any reboot or panic from there comes back to fastboot.
+ROOTDEV=$(arg op2.root)
+if [ -n "$ROOTDEV" ]; then
+	i=0; while [ ! -b "$ROOTDEV" ] && [ $i -lt 20 ]; do sleep 0.5; i=$((i+1)); done
+	mkdir -p /newroot
+	if mount -t ext4 -o rw,noatime "$ROOTDEV" /newroot && [ -x /newroot/usr/lib/systemd/systemd ]; then
+		log "root: $ROOTDEV mounted, switching to systemd"
+		[ -e /run/hold ] || touch /run/hold	# stop the deadman
+		# every helper started above (ssh, dhcp, LED tools, loops) goes:
+		# its programs are deleted with the initramfs
+		kill -TERM -1 2>/dev/null; sleep 0.5; kill -KILL -1 2>/dev/null
+		# ztOS in daily use: a reboot from it (or a crash) must start the
+		# phone normally, so drop the fastboot magic set at the top; test
+		# images keep it with op2.crash=fastboot. 0, not 0x77665501: the
+		# OnePlus LK boots recovery on 0x77665501.
+		if [ "$(arg op2.crash)" != fastboot ]; then
+			devmem 0xfe87f65c 32 0
+			log "reboot magic: normal"
+		fi
+		cp $LOG /newroot/root/op2boot.log 2>/dev/null
+		sync
+		for m in /dev /proc /sys /run; do mkdir -p /newroot$m; mount --move $m /newroot$m 2>/dev/null; done
+		exec switch_root /newroot /usr/lib/systemd/systemd
+	fi
+	log "root: $ROOTDEV not usable (no ext4 or no systemd), staying in the initramfs"
+	umount /newroot 2>/dev/null
+fi
+
+log "ready. telnet 172.16.42.1  (touch /run/hold to stop the deadman)"
+while true; do sleep 3600; done

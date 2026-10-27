@@ -1,0 +1,10 @@
+#!/bin/sh
+# control test: the stock OnePlus kernel runs our initramfs, waits 5 s and
+# reboots into fastboot. If the phone comes back by itself, the LK ->
+# kernel -> our init path works.
+/bin/busybox mkdir -p /proc
+/bin/busybox mount -t proc proc /proc
+/bin/busybox sleep 5
+/bin/reboot-bl bootloader
+/bin/busybox sleep 30
+/bin/busybox echo b > /proc/sysrq-trigger

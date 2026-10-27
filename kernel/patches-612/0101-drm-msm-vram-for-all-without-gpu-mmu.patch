@@ -1,0 +1,115 @@
+From: Matt
+Subject: [PATCH] drm/msm: VRAM carveout for every object when only the GPU has no MMU
+
+OnePlus 2 (MSM8994, Linux 6.12): TrustZone refuses the GPU SMMU set-up, so
+the GPU runs on the VRAM carveout (msm.allow_vram_carveout=1, no iommus on
+the GPU node), while the display keeps its SMMU. msm_use_mmu() is then true
+and objects get pages, which the GPU (no address space) cannot use:
+msm_gem_vma_init() warns and memptrs fails with -EINVAL. Allocate every
+object from the carveout once the GPU falls back; a VRAM object already has
+a vma without address space at its physical address. The carveout itself is
+reserved when allow_vram_carveout is set, and allocated with the display
+controller's parent (MDSS, no IOMMU) so its dma address is physical.
+---
+diff -ruN a/drivers/gpu/drm/msm/msm_drv.c b/drivers/gpu/drm/msm/msm_drv.c
+--- a/drivers/gpu/drm/msm/msm_drv.c	2026-10-27 20:02:57.207884085 +0100
++++ b/drivers/gpu/drm/msm/msm_drv.c	2026-10-27 20:02:57.220746253 +0100
+@@ -17,6 +17,8 @@
+ #include <drm/drm_of.h>
+ 
+ #include "msm_drv.h"
++
++extern bool allow_vram_carveout;	/* adreno/adreno_device.c */
+ #include "msm_debugfs.h"
+ #include "msm_gem.h"
+ #include "msm_gpu.h"
+@@ -122,6 +124,21 @@
+ 		device_iommu_mapped(dev->dev->parent);
+ }
+ 
++/*
++ * The device the carveout is allocated with: the display controller, or, when
++ * only the GPU runs without an MMU (allow_vram_carveout) while the display
++ * controller sits behind an IOMMU, its parent (MDSS) if that one does not:
++ * the carveout's dma address must be its physical address, which the GPU
++ * uses directly.
++ */
++static struct device *msm_vram_dev(struct drm_device *dev)
++{
++	if (allow_vram_carveout && msm_use_mmu(dev) && dev->dev->parent &&
++	    !device_iommu_mapped(dev->dev->parent))
++		return dev->dev->parent;
++	return dev->dev;
++}
++
+ static int msm_init_vram(struct drm_device *dev)
+ {
+ 	struct msm_drm_private *priv = dev->dev_private;
+@@ -160,7 +177,7 @@
+ 		 * Grab the entire DMA chunk carved out in early startup in
+ 		 * mach-msm:
+ 		 */
+-	} else if (!msm_use_mmu(dev)) {
++	} else if (!msm_use_mmu(dev) || allow_vram_carveout) {
+ 		DRM_INFO("using %s VRAM carveout\n", vram);
+ 		size = memparse(vram, NULL);
+ 	}
+@@ -180,7 +197,7 @@
+ 		/* note that for no-kernel-mapping, the vaddr returned
+ 		 * is bogus, but non-null if allocation succeeded:
+ 		 */
+-		p = dma_alloc_attrs(dev->dev, size,
++		p = dma_alloc_attrs(msm_vram_dev(dev), size,
+ 				&priv->vram.paddr, GFP_KERNEL, attrs);
+ 		if (!p) {
+ 			DRM_DEV_ERROR(dev->dev, "failed to allocate VRAM\n");
+@@ -205,7 +222,7 @@
+ 		return;
+ 
+ 	drm_mm_takedown(&priv->vram.mm);
+-	dma_free_attrs(ddev->dev, priv->vram.size, NULL, priv->vram.paddr,
++	dma_free_attrs(msm_vram_dev(ddev), priv->vram.size, NULL, priv->vram.paddr,
+ 			attrs);
+ }
+ 
+diff -ruN a/drivers/gpu/drm/msm/msm_drv.h b/drivers/gpu/drm/msm/msm_drv.h
+--- a/drivers/gpu/drm/msm/msm_drv.h	2026-10-27 20:00:22.893350484 +0100
++++ b/drivers/gpu/drm/msm/msm_drv.h	2026-10-27 20:00:22.914173608 +0100
+@@ -94,6 +94,10 @@
+ 
+ struct msm_drm_private {
+ 
++	/* the GPU runs without an MMU (VRAM carveout) while the display has one:
++	 * every new object comes from the carveout, at its physical address */
++	bool vram_for_all;
++
+ 	struct drm_device *dev;
+ 
+ 	struct msm_kms *kms;
+diff -ruN a/drivers/gpu/drm/msm/msm_gem.c b/drivers/gpu/drm/msm/msm_gem.c
+--- a/drivers/gpu/drm/msm/msm_gem.c	2026-10-27 20:00:22.901984110 +0100
++++ b/drivers/gpu/drm/msm/msm_gem.c	2026-10-27 20:00:22.914364626 +0100
+@@ -1212,7 +1212,7 @@
+ 
+ 	size = PAGE_ALIGN(size);
+ 
+-	if (!msm_use_mmu(dev))
++	if (!msm_use_mmu(dev) || priv->vram_for_all)
+ 		use_vram = true;
+ 	else if ((flags & (MSM_BO_STOLEN | MSM_BO_SCANOUT)) && priv->vram.size)
+ 		use_vram = true;
+diff -ruN a/drivers/gpu/drm/msm/msm_gpu.c b/drivers/gpu/drm/msm/msm_gpu.c
+--- a/drivers/gpu/drm/msm/msm_gpu.c	2026-10-27 20:00:22.897806356 +0100
++++ b/drivers/gpu/drm/msm/msm_gpu.c	2026-10-27 20:00:22.914278536 +0100
+@@ -938,8 +938,10 @@
+ 
+ 	gpu->aspace = gpu->funcs->create_address_space(gpu, pdev);
+ 
+-	if (gpu->aspace == NULL)
++	if (gpu->aspace == NULL) {
+ 		DRM_DEV_INFO(drm->dev, "%s: no IOMMU, fallback to VRAM carveout!\n", name);
++		((struct msm_drm_private *)drm->dev_private)->vram_for_all = true;
++	}
+ 	else if (IS_ERR(gpu->aspace)) {
+ 		ret = PTR_ERR(gpu->aspace);
+ 		goto fail;

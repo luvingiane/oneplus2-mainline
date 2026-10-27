@@ -1,0 +1,71 @@
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * Secondary A53 cores (cluster 0) through the OnePlus firmware's ACC method
+ * (DTS_DEFINES=OP2_SMP, kernel patch 0008). ACC (APC CPU power control)
+ * blocks from OnePlus msm8994.dtsi acc1..acc3 (second reg: 0xf909b000,
+ * 0xf90ab000, 0xf90bb000; acc4..acc7 0xf90cb000..0xf90fb000).
+ * Cluster 1 (A57, cpu4-7) needs its L2 up first: l2ccc_1 (0xf900f000,
+ * scm_io register 0xf911210c, vctl 0xb8) and cluster1_spm (0xf9013000,
+ * Q2S 0xf900f210) from OnePlus msm8994.dtsi / msm8994-v2-pm.dtsi.
+ */
+&soc {
+	acc1: power-controller@f909b000 {
+		compatible = "qcom,msm8994-cpu-acc";
+		reg = <0xf909b000 0x1000>;
+	};
+	acc2: power-controller@f90ab000 {
+		compatible = "qcom,msm8994-cpu-acc";
+		reg = <0xf90ab000 0x1000>;
+	};
+	acc3: power-controller@f90bb000 {
+		compatible = "qcom,msm8994-cpu-acc";
+		reg = <0xf90bb000 0x1000>;
+	};
+};
+
+&{/cpus/cpu@1} { enable-method = "qcom,8994-arm-cortex-acc"; qcom,acc = <&acc1>; };
+&{/cpus/cpu@2} { enable-method = "qcom,8994-arm-cortex-acc"; qcom,acc = <&acc2>; };
+&{/cpus/cpu@3} { enable-method = "qcom,8994-arm-cortex-acc"; qcom,acc = <&acc3>; };
+
+#ifdef OP2_SMP_A57
+/*
+ * A57 cluster: comes up (L2 power-up + ACC), but late (Spectre-v2 and A57
+ * errata 832075/1319367/1742098 workarounds not enabled system-wide: needs
+ * arm64.late_cpu_conflicts=warn, patch 0011) and its PLL is not set up, so it
+ * runs at the reference clock (~1/10 of an A53). Off until there is a
+ * cluster-1 clock/cpufreq driver.
+ */
+&soc {
+	acc4: power-controller@f90cb000 {
+		compatible = "qcom,msm8994-cpu-acc";
+		reg = <0xf90cb000 0x1000>;
+	};
+	acc5: power-controller@f90db000 {
+		compatible = "qcom,msm8994-cpu-acc";
+		reg = <0xf90db000 0x1000>;
+	};
+	acc6: power-controller@f90eb000 {
+		compatible = "qcom,msm8994-cpu-acc";
+		reg = <0xf90eb000 0x1000>;
+	};
+	acc7: power-controller@f90fb000 {
+		compatible = "qcom,msm8994-cpu-acc";
+		reg = <0xf90fb000 0x1000>;
+	};
+
+	/* A57 L2: power control, its SPM (SAW) and the SPM Q2S register */
+	l2ccc1: power-controller@f900f000 {
+		compatible = "qcom,msm8994-l2ccc";
+		reg = <0xf900f000 0x1000>,
+		      <0xf9013000 0x1000>,
+		      <0xf900f210 0x8>;
+		qcom,vctl-val = <0xb8>;
+		qcom,l2-scm-reg = <0xf911210c>;
+	};
+};
+
+&{/cpus/cpu@100} { enable-method = "qcom,8994-arm-cortex-acc"; qcom,acc = <&acc4>; qcom,l2ccc = <&l2ccc1>; };
+&{/cpus/cpu@101} { enable-method = "qcom,8994-arm-cortex-acc"; qcom,acc = <&acc5>; qcom,l2ccc = <&l2ccc1>; };
+&{/cpus/cpu@102} { enable-method = "qcom,8994-arm-cortex-acc"; qcom,acc = <&acc6>; qcom,l2ccc = <&l2ccc1>; };
+&{/cpus/cpu@103} { enable-method = "qcom,8994-arm-cortex-acc"; qcom,acc = <&acc7>; qcom,l2ccc = <&l2ccc1>; };
+#endif

@@ -1,0 +1,125 @@
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * OnePlus 2: Adreno 430 GPU (DTS_DEFINES=OP2_GPU).
+ *
+ * From the OnePlus kernel (msm8994-gpu.dtsi, msm-iommu-v1.dtsi,
+ * msm8994-iommu.dtsi): kgsl-3d0 at 0xfdb00000, SPI 33, clocks
+ * oxili_gfx3d / oxilicx_ahb / oxili_rbbmtimer, GDSCs oxili_cx + oxili_gx
+ * (gx on pmi8994 S2). GPU SMMU at 0xfdb10000, TrustZone secure id 18,
+ * context banks gfx3d_user (0xfdb18000, SID 0), gfx3d_priv (0xfdb19000,
+ * SID 1), all on SPI 241. GMEM is 1.5 MiB of OCMEM (gmu_sram in msm8994.dtsi).
+ * Layout follows mainline msm8939.dtsi (Adreno 405, same SMMU type).
+ */
+
+/*
+ * VDD_GFX: pmi8994 S2+S3, which RPM drives by voltage corner (OnePlus:
+ * pmi8994_s2_corner, initial corner SVS). Writes through SPMI are undone by
+ * RPM (VSET read back 0x84/0x85 = 0.74 V). Hang the MMCC GDSCs below the
+ * rpmpd VDDGFX domain and ask for the nominal corner, so turning the GX
+ * GDSC on raises the rail.
+ */
+&mmcc {
+	power-domains = <&rpmpd MSM8994_VDDGFX>;
+	required-opps = <&rpmpd_opp_turbo>;
+};
+
+&soc {
+/*
+ * OP2_GPU_NOIOMMU (Linux 6.12 + msm.allow_vram_carveout=1): no GPU SMMU node,
+ * no iommus: the msm driver then uses a VRAM carveout (TZ refuses the GPU
+ * SMMU's secure set-up, see LOG.md).
+ */
+#ifndef OP2_GPU_NOIOMMU
+	gpu_iommu: iommu@fdb18000 {
+		compatible = "qcom,msm-iommu-v1";
+		ranges = <0 0xfdb18000 0x3000>;
+		clocks = <&mmcc OXILICX_AHB_CLK>,
+			 <&mmcc OXILI_GFX3D_CLK>;
+		clock-names = "iface", "bus";
+		/*
+		 * GX, not CX: oxili_gfx3d_clk sits in the GX domain and stays
+		 * "stuck at off" with CX alone (OnePlus: vdd cx + alt-vdd gx)
+		 */
+		power-domains = <&mmcc OXILI_GX_GDSC>;
+		qcom,iommu-secure-id = <18>;
+		/*
+		 * OnePlus msm8994-iommu.dtsi &kgsl_iommu: BFB settings, written by
+		 * Linux before the secure config call (kernel patch 0012).
+		 * Off by default: written at probe they hang the boot (s32).
+		 */
+#ifdef OP2_GPU_BFB
+		qcom,bfb-base = <0xfdb12000>;
+		qcom,iommu-bfb-regs = <0x2000 0x204c 0x2060 0x2514 0x2540 0x256c
+				       0x20ac 0x215c 0x220c 0x22bc 0x2314 0x2394
+				       0x2414 0x2494 0x2008 0x2600 0x2604 0x2608
+				       0x260c 0x2610 0x2614 0x2618 0x261c 0x2620
+				       0x2624 0x2628 0x262c>;
+		qcom,iommu-bfb-data = <0x3 0x3 0x1555 0x0 0x0 0x10
+				       0x0 0x120 0x120 0x10 0x0 0x0
+				       0x0 0x1 0x0 0x7 0x0 0x20
+				       0x20 0xc 0x0 0x0 0x0 0x10
+				       0x0 0x0 0x10>;
+#endif
+		#address-cells = <1>;
+		#size-cells = <1>;
+		#iommu-cells = <1>;
+
+		/* gfx3d_user */
+		iommu-ctx@0 {
+			compatible = "qcom,msm-iommu-v1-ns";
+			reg = <0x0 0x1000>;
+			interrupts = <GIC_SPI 241 IRQ_TYPE_LEVEL_HIGH>;
+		};
+
+		/* gfx3d_priv */
+		iommu-ctx@1000 {
+			compatible = "qcom,msm-iommu-v1-ns";
+			reg = <0x1000 0x1000>;
+			interrupts = <GIC_SPI 241 IRQ_TYPE_LEVEL_HIGH>;
+		};
+	};
+#endif
+
+	gpu: gpu@fdb00000 {
+#ifdef OP2_GPU_HEADLESS
+		/* 6.12: "amd,imageon" makes msm register a GPU-only DRM device (no display) */
+		compatible = "qcom,adreno-430.0", "qcom,adreno", "amd,imageon";
+#else
+		compatible = "qcom,adreno-430.0", "qcom,adreno";
+#endif
+		reg = <0xfdb00000 0x40000>;
+		reg-names = "kgsl_3d0_reg_memory";
+		interrupts = <GIC_SPI 33 IRQ_TYPE_LEVEL_HIGH>;
+		interrupt-names = "kgsl_3d0_irq";
+		clocks = <&mmcc OXILI_GFX3D_CLK>,
+			 <&mmcc OXILICX_AHB_CLK>,
+			 <&mmcc OXILI_RBBMTIMER_CLK>,
+			 <&mmcc OCMEMCX_OCMEMNOC_CLK>;
+		clock-names = "core",
+			      "iface",
+			      "rbbmtimer",
+			      "mem_iface";
+		power-domains = <&mmcc OXILI_GX_GDSC>;
+		/*
+		 * Both banks: the OnePlus DT gives bank 0 SIDs <0 1>, but with bank 0
+		 * only the first draw resets the phone (s36-s38) where banks 0 and 1
+		 * merely hang it (19:25 test): TZ's stream mapping still uses bank 1.
+		 */
+#ifndef OP2_GPU_NOIOMMU
+		iommus = <&gpu_iommu 0>, <&gpu_iommu 1>;
+#endif
+#ifndef OP2_GPU_NOSRAM
+		sram = <&gmu_sram>;
+#endif
+		operating-points-v2 = <&gpu_opp_table>;
+
+		gpu_opp_table: opp-table {
+			compatible = "operating-points-v2";
+
+			/* the bootloader's gfx3d rate is kept for now (no RCG in mainline mmcc) */
+			opp-180000000 {
+				opp-hz = /bits/ 64 <180000000>;
+			};
+		};
+	};
+};

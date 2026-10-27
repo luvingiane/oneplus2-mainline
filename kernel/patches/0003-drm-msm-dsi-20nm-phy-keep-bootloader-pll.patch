@@ -1,0 +1,117 @@
+From: Matt
+Subject: [PATCH] drm/msm/dsi: 20nm PHY: keep the bootloader PHY and PLL
+
+Bring-up hack, not for upstream as is. There is no 20nm DSI PLL driver,
+so the display depends on the PLL the bootloader set up, powered through
+the PHY regulator. The host PHY reset before enable, and reprogramming the
+PHY, drop it and the byte clock never starts (-EBUSY). When the PHY is
+found enabled at probe (CTRL_0 = 0x7f), skip the reset and leave the PHY
+alone on enable/disable.
+
+---
+--- a/drivers/gpu/drm/msm/dsi/phy/dsi_phy_20nm.c	2026-10-25 15:08:44.965910405 +0100
++++ b/drivers/gpu/drm/msm/dsi/phy/dsi_phy_20nm.c	2026-10-25 15:08:44.985399859 +0100
+@@ -81,6 +81,19 @@
+ 		return -EINVAL;
+ 	}
+ 
++	/*
++	 * Keep the bootloader's PHY registers. The host still programs the
++	 * clock lane pre/post times (CLKOUT_TIMING_CTRL) from this timing: use
++	 * the bootloader's/panel's values (0x3e/0x20 on the OnePlus 2), not the
++	 * computed ones, so they match the PHY setup that is kept.
++	 */
++	if (phy->bootloader_kept) {
++		timing->shared_timings.clk_pre = 0x3e;
++		timing->shared_timings.clk_post = 0x20;
++		timing->shared_timings.clk_pre_inc_by_2 = false;
++		return 0;
++	}
++
+ 	dsi_20nm_phy_regulator_ctrl(phy, true);
+ 
+ 	writel(0xff, base + REG_DSI_20nm_PHY_STRENGTH_0);
+@@ -124,10 +137,27 @@
+ 
+ static void dsi_20nm_phy_disable(struct msm_dsi_phy *phy)
+ {
++	if (phy->bootloader_kept)
++		return;
+ 	writel(0, phy->base + REG_DSI_20nm_PHY_CTRL_0);
+ 	dsi_20nm_phy_regulator_ctrl(phy, false);
+ }
+ 
++/*
++ * There is no 20nm DSI PLL driver: the PLL is the bootloader's, powered
++ * through this PHY's regulator. If the bootloader left the PHY enabled
++ * (CTRL_0 = 0x7f), keep PHY and PLL exactly as they are.
++ */
++static int dsi_20nm_phy_check_bootloader(struct msm_dsi_phy *phy)
++{
++	if (readl(phy->base + REG_DSI_20nm_PHY_CTRL_0) == 0x7f) {
++		phy->bootloader_kept = true;
++		DRM_DEV_INFO(&phy->pdev->dev,
++			     "keeping the bootloader's PHY and PLL setup\n");
++	}
++	return 0;
++}
++
+ static const struct regulator_bulk_data dsi_phy_20nm_regulators[] = {
+ 	{ .supply = "vddio", .init_load_uA = 100000 },	/* 1.8 V */
+ 	{ .supply = "vcca", .init_load_uA = 10000 },	/* 1.0 V */
+@@ -140,6 +170,7 @@
+ 	.ops = {
+ 		.enable = dsi_20nm_phy_enable,
+ 		.disable = dsi_20nm_phy_disable,
++		.parse_dt_properties = dsi_20nm_phy_check_bootloader,
+ 	},
+ 	.io_start = { 0xfd998500, 0xfd9a0500 },
+ 	.num_dsi_phy = 2,
+--- a/drivers/gpu/drm/msm/dsi/phy/dsi_phy.c	2026-10-25 15:08:44.966924213 +0100
++++ b/drivers/gpu/drm/msm/dsi/phy/dsi_phy.c	2026-10-25 15:08:44.986266429 +0100
+@@ -797,6 +797,11 @@
+ 	return ret;
+ }
+ 
++bool msm_dsi_phy_bootloader_kept(struct msm_dsi_phy *phy)
++{
++	return phy && phy->bootloader_kept;
++}
++
+ void msm_dsi_phy_disable(struct msm_dsi_phy *phy)
+ {
+ 	if (!phy || !phy->cfg->ops.disable)
+--- a/drivers/gpu/drm/msm/dsi/phy/dsi_phy.h	2026-10-25 15:08:44.967765344 +0100
++++ b/drivers/gpu/drm/msm/dsi/phy/dsi_phy.h	2026-10-25 15:08:44.987145600 +0100
+@@ -119,6 +119,8 @@
+ 
+ 	struct clk_hw *vco_hw;
+ 	bool pll_on;
++	/* bring-up: PHY + PLL left running by the bootloader, keep them */
++	bool bootloader_kept;
+ 
+ 	struct clk_hw_onecell_data *provided_clocks;
+ 
+--- a/drivers/gpu/drm/msm/dsi/dsi.h	2026-10-25 15:08:44.968649134 +0100
++++ b/drivers/gpu/drm/msm/dsi/dsi.h	2026-10-25 15:08:44.987982360 +0100
+@@ -144,6 +144,7 @@
+ 			struct msm_dsi_phy_clk_request *clk_req,
+ 			struct msm_dsi_phy_shared_timings *shared_timings);
+ void msm_dsi_phy_disable(struct msm_dsi_phy *phy);
++bool msm_dsi_phy_bootloader_kept(struct msm_dsi_phy *phy);
+ void msm_dsi_phy_set_usecase(struct msm_dsi_phy *phy,
+ 			     enum msm_dsi_phy_usecase uc);
+ void msm_dsi_phy_pll_save_state(struct msm_dsi_phy *phy);
+--- a/drivers/gpu/drm/msm/dsi/dsi_manager.c	2026-10-25 15:08:44.969529764 +0100
++++ b/drivers/gpu/drm/msm/dsi/dsi_manager.c	2026-10-25 15:08:44.988780432 +0100
+@@ -163,7 +163,9 @@
+ 			}
+ 		}
+ 	} else {
+-		msm_dsi_host_reset_phy(msm_dsi->host);
++		/* a reset would drop the bootloader's PLL, which has no driver */
++		if (!msm_dsi_phy_bootloader_kept(msm_dsi->phy))
++			msm_dsi_host_reset_phy(msm_dsi->host);
+ 		ret = enable_phy(msm_dsi, &shared_timings[id]);
+ 		if (ret)
+ 			return ret;

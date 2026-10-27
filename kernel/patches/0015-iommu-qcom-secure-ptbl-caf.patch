@@ -1,0 +1,195 @@
+From: Matt
+Subject: [PATCH] iommu/qcom: secure page table set-up as the CAF kernel does it
+
+OnePlus 2 bring-up: the MSM8994 TZ refuses the GPU SMMU's secure config
+(-EINVAL). The CAF kernel calls IOMMU_SET_CP_POOL_SIZE (300 MiB) and
+IOMMU_SECURE_PTBL_SIZE/INIT once before any secure config, for any secure
+SMMU. Do the same when the SMMU node has a "memory-region" (a no-map
+reserved region the table memory comes from: TZ locks those pages, and
+mainline's NO_KERNEL_MAPPING allocation keeps a cacheable linear alias that
+reset the phone in an earlier attempt). The region is handed over by its
+physical address and never mapped by Linux.
+Bring-up: qcom_iommu.ptbl_step=N stops after step N (see the code).
+---
+v4: qcom_iommu.ptbl_early=1 hands the tables over once when the driver registers, before any SMMU probes (as CAF's subsys_initcall).
+v5: step 2 reads TZ's MP version (patch 0023) and sets the pool size only from 1.1.1 on, as CAF (qcom_iommu.ptbl_pool=-1/0/1).
+
+--- a/drivers/iommu/arm/arm-smmu/qcom_iommu.c	2026-10-27 15:11:59.449763205 +0100
++++ b/drivers/iommu/arm/arm-smmu/qcom_iommu.c	2026-10-27 15:37:28.747232916 +0100
+@@ -23,6 +23,7 @@
+ #include <linux/mutex.h>
+ #include <linux/of.h>
+ #include <linux/of_platform.h>
++#include <linux/of_reserved_mem.h>
+ #include <linux/platform_device.h>
+ #include <linux/pm.h>
+ #include <linux/pm_runtime.h>
+@@ -615,49 +616,108 @@
+ 	}
+ };
+ 
+-static int qcom_iommu_sec_ptbl_init(struct device *dev)
++/* bring-up: how far the CAF-style set-up goes (qcom_iommu.ptbl_step=N):
++ * 0 none, 1 find the reserved memory, 2 + pool size, 3 + table size,
++ * 4 + table init */
++static int ptbl_step = 4;
++module_param(ptbl_step, int, 0444);
++
++/* bring-up: hand TZ the table memory once, when this driver registers,
++ * before any SMMU probes and makes a secure call (qcom_iommu.ptbl_early=1),
++ * as CAF does from a subsys_initcall (msm_iommu_sec.c:981-995) */
++static bool ptbl_early;
++module_param(ptbl_early, bool, 0444);
++
++/* bring-up: the content-protection pool size call (step 2): -1 as CAF
++ * (only from MP 1.1.1 on, msm_iommu_sec.c:371-373), 0 never, 1 always */
++static int ptbl_pool = -1;
++module_param(ptbl_pool, int, 0444);
++#define QCOM_SCM_SVC_MP_ID	0x0c
++#define QCOM_MAKE_VERSION(major, minor, patch) \
++	((((major) & 0x3FF) << 22) | (((minor) & 0x3FF) << 12) | ((patch) & 0xFFF))
++
++static int qcom_iommu_sec_ptbl_init_np(struct device_node *np)
+ {
++	struct device_node *mnp;
++	struct reserved_mem *rmem = NULL;
+ 	size_t psize = 0;
+ 	unsigned int spare = 0;
+-	void *cpu_addr;
+-	dma_addr_t paddr;
+-	unsigned long attrs;
+ 	static bool allocated = false;
+ 	int ret;
+ 
+ 	if (allocated)
+ 		return 0;
+ 
+-	ret = qcom_scm_iommu_secure_ptbl_size(spare, &psize);
+-	if (ret) {
+-		dev_err(dev, "failed to get iommu secure pgtable size (%d)\n",
+-			ret);
+-		return ret;
++	/*
++	 * OnePlus 2 bring-up, as the CAF kernel (msm_iommu_sec.c): tell TZ the
++	 * content-protection pool size first, then hand it the table memory.
++	 * That memory is a no-map reserved region ("memory-region") whose
++	 * physical address goes to TZ as is: Linux never maps it (not even
++	 * write-combine), since TZ locks it and any speculative access to it
++	 * would be an XPU violation.
++	 */
++	pr_info("iommu sec: CAF-style set-up up to step %d\n", ptbl_step);
++	mdelay(200);	/* let the console reach pstore before each risky step */
++	if (ptbl_step < 1)
++		return 0;
++	mnp = of_parse_phandle(np, "memory-region", 0);
++	if (mnp) {
++		rmem = of_reserved_mem_lookup(mnp);
++		of_node_put(mnp);
+ 	}
+-
+-	dev_info(dev, "iommu sec: pgtable size: %zu\n", psize);
+-
+-	attrs = DMA_ATTR_NO_KERNEL_MAPPING;
+-
+-	cpu_addr = dma_alloc_attrs(dev, psize, &paddr, GFP_KERNEL, attrs);
+-	if (!cpu_addr) {
+-		dev_err(dev, "failed to allocate %zu bytes for pgtable\n",
+-			psize);
++	if (!rmem) {
++		pr_err("iommu sec: no reserved table memory\n");
+ 		return -ENOMEM;
+ 	}
++	pr_info("iommu sec: 1 table memory %pa, %pa bytes (unmapped)\n",
++		 &rmem->base, &rmem->size);
++	mdelay(200);
++	if (ptbl_step < 2)
++		return 0;
++	{
++		u64 ver = 0;
++		int vret = qcom_scm_get_feat_version(QCOM_SCM_SVC_MP_ID, &ver);
++		bool pool = ptbl_pool > 0 ||
++			(ptbl_pool < 0 && !vret && ver >= QCOM_MAKE_VERSION(1, 1, 1));
++
++		pr_info("iommu sec: 2 MP version %llu.%llu.%llu (%d), pool size %s\n",
++			(ver >> 22) & 0x3ff, (ver >> 12) & 0x3ff, ver & 0xfff, vret,
++			pool ? "set" : "skipped");
++		if (pool) {
++			ret = qcom_scm_iommu_set_cp_pool_size(0, 300 * SZ_1M);
++			pr_info("iommu sec: 2 cp pool size: %d\n", ret);
++		}
++	}
++	mdelay(200);
++	if (ptbl_step < 3)
++		return 0;
+ 
+-	ret = qcom_scm_iommu_secure_ptbl_init(paddr, psize, spare);
+-	if (ret) {
+-		dev_err(dev, "failed to init iommu pgtable (%d)\n", ret);
+-		goto free_mem;
++	ret = qcom_scm_iommu_secure_ptbl_size(spare, &psize);
++	pr_info("iommu sec: 3 pgtable size: %zu (%d)\n", psize, ret);
++	mdelay(200);
++	if (ret)
++		return ret;
++	if (psize > rmem->size) {
++		pr_err("iommu sec: TZ wants %zu bytes, region has %pa\n",
++			psize, &rmem->size);
++		return -ENOMEM;
+ 	}
++	if (ptbl_step < 4)
++		return 0;
++
++	ret = qcom_scm_iommu_secure_ptbl_init(rmem->base, psize, spare);
++	pr_info("iommu sec: 4 pgtable init at %pa: %d\n", &rmem->base, ret);
++	mdelay(200);
++	if (ret)
++		return ret;
+ 
+ 	allocated = true;
+ 	return 0;
++}
+ 
+-free_mem:
+-	dma_free_attrs(dev, psize, cpu_addr, paddr, attrs);
+-	return ret;
++static int qcom_iommu_sec_ptbl_init(struct device *dev)
++{
++	return qcom_iommu_sec_ptbl_init_np(dev->of_node);
+ }
+ 
+ static int get_asid(const struct device_node *np)
+@@ -861,7 +921,8 @@
+ 		return -ENODEV;
+ 	}
+ 
+-	if (qcom_iommu_has_secure_context(qcom_iommu)) {
++	if (qcom_iommu_has_secure_context(qcom_iommu) ||
++	    of_property_present(dev->of_node, "memory-region")) {
+ 		ret = qcom_iommu_sec_ptbl_init(dev);
+ 		if (ret) {
+ 			dev_err(dev, "cannot init secure pg table(%d)\n", ret);
+@@ -989,6 +1050,24 @@
+ {
+ 	int ret;
+ 
++	if (ptbl_early) {
++		struct device_node *np;
++
++		if (!qcom_scm_is_available()) {
++			pr_warn("iommu sec: early: SCM not ready, left to the probe\n");
++		} else {
++			for_each_node_with_property(np, "memory-region") {
++				if (!of_property_present(np, "qcom,iommu-secure-id"))
++					continue;
++				pr_info("iommu sec: early, for %pOF\n", np);
++				ret = qcom_iommu_sec_ptbl_init_np(np);
++				pr_info("iommu sec: early: %d\n", ret);
++				of_node_put(np);
++				break;
++			}
++		}
++	}
++
+ 	ret = platform_driver_register(&qcom_iommu_ctx_driver);
+ 	if (ret)
+ 		return ret;

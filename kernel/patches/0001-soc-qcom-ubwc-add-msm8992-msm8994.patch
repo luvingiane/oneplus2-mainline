@@ -1,0 +1,20 @@
+From: Matt
+Subject: [PATCH] soc: qcom: ubwc: add MSM8992 and MSM8994
+
+The MDSS driver asks qcom_ubwc_config_get_data() for every SoC and fails
+with -EINVAL when the machine is not in the table, so the display never
+probes on MSM8992/MSM8994 boards. Neither has UBWC: list them with
+no_ubwc_data, as MSM8974 is.
+
+---
+--- a/drivers/soc/qcom/ubwc_config.c	2026-10-25 14:46:15.170283901 +0100
++++ b/drivers/soc/qcom/ubwc_config.c	2026-10-25 14:46:15.171243780 +0100
+@@ -124,6 +124,8 @@
+ 	{ .compatible = "qcom,msm8953", .data = &ubwc_1_0_hbb14 },
+ 	{ .compatible = "qcom,msm8956", .data = &no_ubwc_data },
+ 	{ .compatible = "qcom,msm8974", .data = &no_ubwc_data },
++	{ .compatible = "qcom,msm8992", .data = &no_ubwc_data },
++	{ .compatible = "qcom,msm8994", .data = &no_ubwc_data },
+ 	{ .compatible = "qcom,msm8976", .data = &no_ubwc_data },
+ 	{ .compatible = "qcom,msm8996", .data = &ubwc_1_0_hbb15 },
+ 	{ .compatible = "qcom,msm8998", .data = &ubwc_1_0_hbb15 },

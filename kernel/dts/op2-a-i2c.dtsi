@@ -1,0 +1,12 @@
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * Phone A experiments (DTS_DEFINES=OP2_A_I2C): BLSP2 QUP5 I2C at 0xf9967000,
+ * where the OnePlus kernel puts the TFA9890 speaker amplifier (0x36, reset
+ * GPIO 106; msm8994-mtp.dtsi). Bus only, no client: probed by hand
+ * (i2cdetect / i2cget) by the helper agents.
+ */
+&blsp2_i2c5 {
+	status = "okay";
+	/delete-property/ dmas;
+	/delete-property/ dma-names;
+};

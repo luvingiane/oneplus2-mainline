@@ -1,0 +1,19 @@
+# personal data, IMEI/MAC/calibration: never committed or pushed
+backup/
+# third-party source checkouts used for research (re-cloned on demand)
+research/pmaports/
+research/linux-mainline/
+research/lineage-kernel/
+research/lineage-device-oneplus2/
+# build outputs
+build/
+out/
+*.img
+research/lk2nd/
+research/panel-gen/
+research/panel-out/
+research/downstream-dtb/
+keys/
+gemini/
+firmware/
+rootfs-overlay/usr/lib/firmware/

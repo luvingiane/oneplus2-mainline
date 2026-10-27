@@ -1,0 +1,5 @@
+# OnePlus 2: ztMETRO's power menu (runs as zerone) reboots into fastboot or
+# recovery. Exactly these commands, nothing else. (ztOS's own 99-ztos-shell,
+# which allows the recovery one, is not in this rootfs.)
+zerone ALL=(root) NOPASSWD: /usr/bin/systemctl reboot --reboot-argument=bootloader, \
+	/usr/bin/systemctl reboot --reboot-argument=recovery

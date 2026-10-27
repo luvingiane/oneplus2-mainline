@@ -1,0 +1,15 @@
+# USB link to the computer (NCM gadget set up by the boot image's initramfs):
+# phone 172.16.42.1, computer 172.16.42.2
+[connection]
+id=usb0
+type=ethernet
+interface-name=usb0
+autoconnect=true
+
+[ipv4]
+method=manual
+address1=172.16.42.1/24
+never-default=true
+
+[ipv6]
+method=disabled

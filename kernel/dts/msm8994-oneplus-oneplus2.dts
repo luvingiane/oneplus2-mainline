@@ -1,0 +1,467 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * OnePlus 2 (oneplus2, project 14049), MSM8994 v2.1.
+ *
+ * Stage 1 (boot + screen): the display is the bootloader's continuous
+ * splash, kept alive as a simple-framebuffer; USB gadget for a shell; eMMC;
+ * keys; ramoops in the region OnePlus's own kernel uses, so a crashed boot can
+ * be read back from Android/recovery (/sys/fs/pstore).
+ *
+ * Board facts from the OnePlus/LineageOS 3.10 tree:
+ * arch/arm/boot/dts/qcom/msm8994-mtp.dtsi, msm8994-v2.1-mtp_14049_HW_1x.dts,
+ * msm8994.dtsi (reserved memory).
+ */
+
+/dts-v1/;
+
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/input/gpio-keys.h>
+#include <dt-bindings/input/input.h>
+#include <dt-bindings/leds/common.h>
+#include <dt-bindings/interrupt-controller/irq.h>
+#include "msm8994.dtsi"
+#include "pm8994.dtsi"
+#include "pmi8994.dtsi"
+
+#ifndef OP2_HW_REV
+#define OP2_HW_REV 14
+#endif
+#define OP2_NO_PSCI
+#ifndef OP2_SOC_REV
+#define OP2_SOC_REV 0x20001
+#endif
+
+/ {
+	model = "OnePlus 2";
+	compatible = "oneplus,oneplus2", "qcom,msm8994";
+	chassis-type = "handset";
+
+	/* required for the bootloader to pick this DTB */
+	/* one DTB per SoC revision (0x10000, 0x20000, 0x20001), as stock */
+	qcom,msm-id = <207 OP2_SOC_REV>;
+	qcom,pmic-id = <0x10009 0x1000a 0x0 0x0>;
+	/* OnePlus 4-cell board id: <platform 0 project hw-rev> */
+	qcom,board-id = <8 0 14049 OP2_HW_REV>;
+
+	aliases {
+		serial0 = &blsp2_uart2;
+	};
+
+	chosen {
+		#address-cells = <2>;
+		#size-cells = <2>;
+		ranges;
+
+		/* the bootloader leaves the JDI panel scanning out from here */
+		framebuffer0: framebuffer@3400000 {
+			compatible = "simple-framebuffer";
+			reg = <0 0x03400000 0 (1080 * 1920 * 3)>;
+			width = <1080>;
+			height = <1920>;
+			stride = <(1080 * 3)>;
+			format = "r8g8b8";
+			clocks = <&mmcc MDSS_AHB_CLK>,
+				 <&mmcc MDSS_AXI_CLK>,
+				 <&mmcc MDSS_VSYNC_CLK>,
+				 <&mmcc MDSS_MDP_CLK>,
+				 <&mmcc MDSS_BYTE0_CLK>,
+				 <&mmcc MDSS_PCLK0_CLK>,
+				 <&mmcc MDSS_ESC0_CLK>;
+			power-domains = <&mmcc MDSS_GDSC>;
+		};
+	};
+
+	reserved-memory {
+		/* OnePlus additions to the msm8994 map (downstream msm8994.dtsi) */
+		memory_nvbackup: nvbackup@6200000 {
+			reg = <0 0x06200000 0 0x100000>;
+			no-map;
+		};
+
+		memory_hole: hole@6300000 {
+			reg = <0 0x06300000 0 0x700000>;
+			no-map;
+		};
+
+		tzapp_mem: tzapp@e900000 {
+			reg = <0 0x0e900000 0 0x1900000>;
+			no-map;
+		};
+
+		/*
+		 * Same layout as OnePlus's 3.10 kernel (TWRP reports record 4 KiB,
+		 * console 256 KiB, ftrace 4 KiB, no pmsg, no ECC), so after a warm
+		 * reset TWRP finds valid zones and shows our log in /sys/fs/pstore
+		 * instead of wiping it.
+		 */
+		ramoops@ac000000 {
+			compatible = "ramoops";
+			reg = <0 0xac000000 0 0x100000>;
+			record-size = <0x1000>;
+			console-size = <0x40000>;
+			ftrace-size = <0x1000>;
+			pmsg-size = <0>;
+		};
+	};
+
+#ifndef OP2_NO_TOUCH
+	/* touch controller I/O supply: 1.8 V switched by GPIO 74 ("synaptics,1v8-gpio") */
+	ts_vio: regulator-ts-vio {
+		compatible = "regulator-fixed";
+		regulator-name = "ts_vio_1v8";
+		regulator-min-microvolt = <1800000>;
+		regulator-max-microvolt = <1800000>;
+		gpio = <&tlmm 74 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
+		startup-delay-us = <5000>;
+		/*
+		 * The bootloader leaves GPIO 74 high and the panel needs this rail
+		 * too (in-cell): never switch it off, not even for a moment at
+		 * probe, or the display goes dark for good.
+		 */
+		regulator-boot-on;
+		regulator-always-on;
+	};
+#endif
+
+	gpio-keys {
+		compatible = "gpio-keys";
+		autorepeat;
+
+		button-vol-up {
+			label = "Volume Up";
+			gpios = <&pm8994_gpios 3 GPIO_ACTIVE_LOW>;
+			linux,code = <KEY_VOLUMEUP>;
+			wakeup-source;
+			debounce-interval = <15>;
+		};
+
+		button-vol-down {
+			label = "Volume Down";
+			gpios = <&pm8994_gpios 2 GPIO_ACTIVE_LOW>;
+			linux,code = <KEY_VOLUMEDOWN>;
+			debounce-interval = <15>;
+		};
+	};
+
+	/*
+	 * Alert slider (OnePlus "tri-state key"): two switches to ground, no
+	 * external pull-ups. Measured 2026-10-25: top = GPIO 77 low,
+	 * middle = both high, bottom = GPIO 34 low. Each end position reads
+	 * as a key held down; the middle as neither.
+	 */
+	alert-slider {
+		compatible = "gpio-keys";
+		label = "Alert slider";
+		pinctrl-names = "default";
+		pinctrl-0 = <&slider_default>;
+
+		slider-top {
+			label = "Slider top";
+			gpios = <&tlmm 77 GPIO_ACTIVE_LOW>;
+			linux,code = <KEY_F13>;
+			debounce-interval = <50>;
+		};
+
+		slider-bottom {
+			label = "Slider bottom";
+			gpios = <&tlmm 34 GPIO_ACTIVE_LOW>;
+			linux,code = <KEY_F15>;
+			debounce-interval = <50>;
+		};
+	};
+};
+
+#ifdef OP2_NO_PSCI
+/*
+ * OnePlus's firmware brings CPUs up with "qcom,8994-arm-cortex-acc", not
+ * PSCI: test without the msm8994.dtsi PSCI-over-HVC node (CPU0 only).
+ */
+/ {
+	/delete-node/ psci;
+};
+&{/cpus/cpu@0} { /delete-property/ enable-method; };
+&{/cpus/cpu@1} { /delete-property/ enable-method; };
+&{/cpus/cpu@2} { /delete-property/ enable-method; };
+&{/cpus/cpu@3} { /delete-property/ enable-method; };
+&{/cpus/cpu@100} { /delete-property/ enable-method; };
+&{/cpus/cpu@101} { /delete-property/ enable-method; };
+&{/cpus/cpu@102} { /delete-property/ enable-method; };
+&{/cpus/cpu@103} { /delete-property/ enable-method; };
+#endif
+
+/*
+ * Only the rails we use, at OnePlus's voltages (downstream
+ * msm8994-regulator.dtsi): S4 1.8 V (I/O, always on), L22 3.0 V (touch).
+ */
+&rpm_requests {
+	regulators-0 {
+		compatible = "qcom,rpm-pm8994-regulators";
+
+		vdd_s4-supply = <&vph_pwr>;
+		vdd_l6_l12_l32-supply = <&vph_pwr>;
+		vdd_l9_l10_l18_l22-supply = <&vph_pwr>;
+		vdd_l8_l16_l30-supply = <&vph_pwr>;
+		vdd_l14_l15-supply = <&vph_pwr>;
+		vdd_l2_l26_l28-supply = <&vph_pwr>;
+
+		pm8994_s4: s4 {
+			regulator-min-microvolt = <1800000>;
+			regulator-max-microvolt = <1800000>;
+			regulator-always-on;
+		};
+
+#if defined(OP2_BT) || defined(OP2_WIFI)
+		/* QCA6174 crystal (OnePlus qca,bt-vdd-xtal-supply, cnss vdd-wlan-xtal) */
+		pm8994_l30: l30 {
+			regulator-min-microvolt = <1800000>;
+			regulator-max-microvolt = <1800000>;
+			regulator-always-on;
+		};
+#endif
+
+		/* display rails, values as TWRP (OnePlus 3.10) reports them; L12 also
+		 * feeds several SoC PLLs: never let it go off */
+		pm8994_l12: l12 {
+			regulator-min-microvolt = <1800000>;
+			regulator-max-microvolt = <1800000>;
+			regulator-always-on;
+			/* high-power mode, as the bootloader leaves it: without a load
+			 * vote the RPM drops the LDO to low-power mode */
+			regulator-system-load = <100000>;
+			regulator-allow-set-load;
+		};
+
+		pm8994_l14: l14 {
+			regulator-min-microvolt = <1800000>;
+			regulator-max-microvolt = <1800000>;
+			regulator-always-on;
+			/* high-power mode, as the bootloader leaves it: without a load
+			 * vote the RPM drops the LDO to low-power mode */
+			regulator-system-load = <100000>;
+			regulator-allow-set-load;
+		};
+
+		pm8994_l28: l28 {
+			regulator-min-microvolt = <1000000>;
+			regulator-max-microvolt = <1000000>;
+			regulator-always-on;
+			/* high-power mode, as the bootloader leaves it: without a load
+			 * vote the RPM drops the LDO to low-power mode */
+			regulator-system-load = <100000>;
+			regulator-allow-set-load;
+		};
+
+		/* always on in OnePlus's DTS ("FIX GPS power issue") */
+		pm8994_l16: l16 {
+			regulator-min-microvolt = <2700000>;
+			regulator-max-microvolt = <2700000>;
+			regulator-always-on;
+		};
+
+		pm8994_l22: l22 {
+			regulator-min-microvolt = <3000000>;
+			regulator-max-microvolt = <3000000>;
+			/*
+			 * Without a load vote the RPM keeps the LDO in low-power
+			 * mode: I2C works (1.8 V side) but the touch analog front
+			 * end cannot scan. Ask for high-power mode.
+			 */
+			regulator-system-load = <100000>;
+			regulator-allow-set-load;
+		};
+	};
+};
+
+#ifndef OP2_NO_TOUCH
+/* Synaptics S3320 touchscreen (downstream: i2c@f9924000 synaptics-rmi-ts@20) */
+&blsp1_i2c2 {
+	status = "okay";
+	/* the BLSP BAM DMA engines fail to probe (-EINVAL) for now: use PIO */
+	/delete-property/ dmas;
+	/delete-property/ dma-names;
+
+	touchscreen@20 {
+		compatible = "syna,rmi4-i2c";
+		reg = <0x20>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		interrupts-extended = <&tlmm 96 IRQ_TYPE_EDGE_FALLING>;
+
+		vdd-supply = <&pm8994_l22>;
+		vio-supply = <&ts_vio>;
+
+		syna,reset-delay-ms = <200>;
+		syna,startup-delay-ms = <200>;
+
+		rmi4-f01@1 {
+			reg = <0x01>;
+			/* 2 = nosleep on (1 would allow sleeping) */
+			syna,nosleep-mode = <2>;
+		};
+
+		rmi4-f12@12 {
+			reg = <0x12>;
+			syna,sensor-type = <1>;
+		};
+	};
+};
+#endif
+
+/*
+ * Keys below the screen (back, recents, home on the fingerprint sensor's
+ * surface): a second Synaptics chip, S1302, RMI4 on BLSP1 QUP6, IRQ GPIO 67
+ * (OnePlus msm8994-mtp.dtsi). OnePlus's driver reads them on page 2:
+ * bit 0 back, bit 1 recents, bit 2 home -> F1A buttons in this order.
+ * The ST VL6180 proximity sensor (0x29) shares the bus; not described yet.
+ */
+&blsp1_i2c6 {
+	status = "okay";
+	/delete-property/ dmas;
+	/delete-property/ dma-names;
+
+	keys@20 {
+		compatible = "syna,rmi4-i2c";
+		reg = <0x20>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		interrupts-extended = <&tlmm 67 IRQ_TYPE_EDGE_FALLING>;
+
+		rmi4-f01@1 {
+			reg = <0x01>;
+			syna,nosleep-mode = <2>;
+		};
+
+		rmi4-f1a@1a {
+			reg = <0x1a>;
+			linux,keycodes = <KEY_BACK KEY_APPSELECT KEY_HOMEPAGE>;
+		};
+	};
+};
+
+&blsp2_uart2 {
+	status = "okay";
+};
+
+/*
+ * Signals the owner can see with the command-mode panel frozen and no USB:
+ * red LED heartbeat = kernel alive; backlight blinks + blue = our init runs;
+ * green = USB gadget bound. LED channels from downstream msm-pmi8994.dtsi
+ * (red pwm_3, green pwm_2, blue pwm_1); WLED values as OnePlus's:
+ * strings 0+1, 20 mA, OVP 29.5 V, ILIM 980 mA, 800 kHz.
+ */
+&pmi8994_lpg {
+	qcom,power-source = <1>;
+	status = "okay";
+
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	led@1 {
+		reg = <1>;
+		color = <LED_COLOR_ID_BLUE>;
+		function = LED_FUNCTION_STATUS;
+		label = "op2:blue";
+	};
+
+	led@2 {
+		reg = <2>;
+		color = <LED_COLOR_ID_GREEN>;
+		function = LED_FUNCTION_STATUS;
+		label = "op2:green";
+	};
+
+	led@3 {
+		reg = <3>;
+		color = <LED_COLOR_ID_RED>;
+		function = LED_FUNCTION_HEARTBEAT;
+		label = "op2:red";
+		linux,default-trigger = "heartbeat";
+	};
+};
+
+&pmi8994_wled {
+#ifdef OP2_WLED_OFF
+	status = "disabled";
+#else
+	status = "okay";
+#endif
+	default-brightness = <2048>;
+	qcom,num-strings = <2>;
+	qcom,enabled-strings = <0 1>;
+	/* no CABC: brightness must not depend on the panel's PWM output */
+	/delete-property/ qcom,cabc;
+	qcom,current-limit-microamp = <20000>;
+#ifdef OP2_K612
+	/* Linux 6.12: generic WLED4 OVP table, 29.6 V = same register code as 29.5 V */
+	qcom,ovp-millivolt = <29600>;
+#else
+	qcom,ovp-millivolt = <29500>;
+#endif
+	qcom,current-boost-limit = <970>;
+	qcom,switching-freq = <800>;
+};
+
+&pm8994_resin {
+	/* volume down is a GPIO on this board; RESIN is unused */
+	status = "disabled";
+};
+
+&sdhc1 {
+	status = "okay";
+	mmc-hs400-1_8v;
+};
+
+&tlmm {
+	/* BLSP2 QUP6 (fingerprint SPI) belongs to TrustZone */
+	gpio-reserved-ranges = <85 4>;
+
+	/*
+	 * GPIO 31 (touch reset, active low) is left as the bootloader has it:
+	 * input, held high from outside. No hog.
+	 */
+
+	slider_default: slider-default-state {
+		pins = "gpio34", "gpio77";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-pull-up;
+	};
+};
+
+#ifdef OP2_DISPLAY
+#include "op2-display.dtsi"
+#endif
+
+#ifdef OP2_GPU
+#include "op2-gpu.dtsi"
+#endif
+
+#ifdef OP2_BT
+#include "op2-bt.dtsi"
+#endif
+
+#ifdef OP2_WIFI
+#include "op2-wifi.dtsi"
+#endif
+
+#ifdef OP2_SECURE_PTBL
+#include "op2-iommu-sec.dtsi"
+#endif
+
+#ifdef OP2_USBPHY
+#include "op2-usbphy.dtsi"
+#endif
+
+#ifdef OP2_A_I2C
+#include "op2-a-i2c.dtsi"
+#endif
+
+#ifdef OP2_SMP
+#include "op2-smp.dtsi"
+#endif
+
+#include "op2-battery.dtsi"
+#include "op2-reboot.dtsi"

@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# ssh into the phone (key in keys/, no password): scripts/op2-ssh [command]
+exec ssh -F "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/keys/ssh_config" op2 "$@"

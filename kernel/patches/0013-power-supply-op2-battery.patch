@@ -1,0 +1,185 @@
+From: Matt
+Subject: [PATCH] power: supply: OnePlus 2 PMI8994 minimal charger set-up and battery
+
+Bring-up stopgap: our kernel left the PMI8994 charger as LK left it, so a
+phone booted without LK setting it up never charged (CHGR_STS 0x80 with USB
+present). Write the set-up read from a charging phone at probe and report
+the fuel gauge SOC as /sys/class/power_supply/battery.
+
+---
+--- a/drivers/power/supply/Kconfig
++++ b/drivers/power/supply/Kconfig
+@@ -208,6 +208,13 @@
+ 	  Say Y here to expose battery information on Apple machines
+ 	  through the generic battery class.
+ 
++config BATTERY_OP2
++	tristate "OnePlus 2 PMI8994 minimal charger set-up and battery report"
++	depends on MFD_SPMI_PMIC || COMPILE_TEST
++	help
++	  Bring-up driver for the OnePlus 2: programs the PMI8994 charger as
++	  the bootloader does when it charges and reports the fuel gauge SOC.
++
+ config BATTERY_QCOM_BATTMGR
+ 	tristate "Qualcomm PMIC GLINK battery manager support"
+ 	depends on QCOM_PMIC_GLINK
+--- a/drivers/power/supply/Makefile
++++ b/drivers/power/supply/Makefile
+@@ -135,3 +135,4 @@
+ obj-$(CONFIG_FUEL_GAUGE_MM8013)	+= mm8013.o
+ obj-$(CONFIG_MACSMC_POWER)	+= macsmc-power.o
+ obj-$(CONFIG_CHARGER_MAX77759)	+= max77759_charger.o
++obj-$(CONFIG_BATTERY_OP2)	+= op2-battery.o
+--- /dev/null
++++ b/drivers/power/supply/op2-battery.c
+@@ -0,0 +1,150 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * OnePlus 2 (PMI8994) minimal charger set-up and battery report.
++ *
++ * Bring-up stopgap until a real PMI8994 SMBCHG/FG driver exists: at probe it
++ * writes the charger set-up LK leaves behind when it charges (values read
++ * from a charging phone) and reports the fuel gauge's monotonic SOC.
++ * Register meanings from the OnePlus/CAF qpnp-smbcharger.c / qpnp-fg.c:
++ *   CHGR  0x1000: CHGR_STS 0x0e (CHG_TYPE bits 2:1), FCC_CFG 0xf2 (sec),
++ *                 CHGR_CFG2 0xfc (sec, bit 7 CHG_EN_SRC)
++ *   BATIF 0x1200: BAT_PRES_STATUS 0x08 bit 7, CMD_CHG_REG 0x42 bit 1
++ *                 (EN_BAT_CHG, active low)
++ *   USBIN 0x1300: RT_STS 0x10, CMD_IL 0x40, IL_CFG 0xf2 (sec)
++ *   FG    0x4000: SOC_MONOTONIC 0x09 (0..255)
++ *   "sec" registers need 0xa5 written to the peripheral's 0xd0 first.
++ * Init writes come from DT: oneplus,init-regs = <addr value sec ...>.
++ */
++
++#include <linux/module.h>
++#include <linux/of.h>
++#include <linux/platform_device.h>
++#include <linux/power_supply.h>
++#include <linux/regmap.h>
++
++#define CHGR_STS	0x100e
++#define BAT_PRES	0x1208
++#define USBIN_RT_STS	0x1310
++#define FG_SOC		0x4009
++#define SEC_ACCESS	0xd0
++
++struct op2_bat {
++	struct regmap *map;
++	struct power_supply *psy;
++};
++
++static int rd(struct op2_bat *b, unsigned int reg)
++{
++	unsigned int v;
++
++	return regmap_read(b->map, reg, &v) ? -EIO : v;
++}
++
++static int op2_bat_get(struct power_supply *psy, enum power_supply_property p,
++		       union power_supply_propval *val)
++{
++	struct op2_bat *b = power_supply_get_drvdata(psy);
++	int v;
++
++	switch (p) {
++	case POWER_SUPPLY_PROP_PRESENT:
++		v = rd(b, BAT_PRES);
++		if (v < 0)
++			return v;
++		val->intval = !!(v & BIT(7));
++		break;
++	case POWER_SUPPLY_PROP_CAPACITY:
++		v = rd(b, FG_SOC);
++		if (v < 0)
++			return v;
++		val->intval = DIV_ROUND_CLOSEST(v * 100, 255);
++		break;
++	case POWER_SUPPLY_PROP_STATUS:
++		v = rd(b, CHGR_STS);
++		if (v < 0)
++			return v;
++		if ((v >> 1) & 0x3)
++			val->intval = POWER_SUPPLY_STATUS_CHARGING;
++		else if ((rd(b, USBIN_RT_STS) & BIT(2)) > 0)
++			val->intval = POWER_SUPPLY_STATUS_NOT_CHARGING;
++		else
++			val->intval = POWER_SUPPLY_STATUS_DISCHARGING;
++		break;
++	default:
++		return -EINVAL;
++	}
++	return 0;
++}
++
++static const enum power_supply_property op2_bat_props[] = {
++	POWER_SUPPLY_PROP_STATUS,
++	POWER_SUPPLY_PROP_PRESENT,
++	POWER_SUPPLY_PROP_CAPACITY,
++};
++
++static const struct power_supply_desc op2_bat_desc = {
++	.name = "battery",
++	.type = POWER_SUPPLY_TYPE_BATTERY,
++	.properties = op2_bat_props,
++	.num_properties = ARRAY_SIZE(op2_bat_props),
++	.get_property = op2_bat_get,
++};
++
++static int op2_bat_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct power_supply_config cfg = {};
++	struct op2_bat *b;
++	u32 *t;
++	int n, i;
++
++	b = devm_kzalloc(dev, sizeof(*b), GFP_KERNEL);
++	if (!b)
++		return -ENOMEM;
++	b->map = dev_get_regmap(dev->parent, NULL);
++	if (!b->map)
++		return dev_err_probe(dev, -ENODEV, "no PMIC regmap\n");
++
++	n = of_property_count_u32_elems(dev->of_node, "oneplus,init-regs");
++	if (n > 0 && n % 3 == 0) {
++		t = devm_kcalloc(dev, n, sizeof(u32), GFP_KERNEL);
++		if (!t)
++			return -ENOMEM;
++		of_property_read_u32_array(dev->of_node, "oneplus,init-regs", t, n);
++		for (i = 0; i < n; i += 3) {
++			int before = rd(b, t[i]);
++
++			if (t[i + 2])
++				regmap_write(b->map, (t[i] & ~0xff) | SEC_ACCESS, 0xa5);
++			regmap_write(b->map, t[i], t[i + 1]);
++			dev_info(dev, "%#06x: %#04x -> %#04x\n", t[i], before, rd(b, t[i]));
++		}
++	}
++
++	cfg.drv_data = b;
++	cfg.fwnode = dev_fwnode(dev);
++	b->psy = devm_power_supply_register(dev, &op2_bat_desc, &cfg);
++	if (IS_ERR(b->psy))
++		return PTR_ERR(b->psy);
++	dev_info(dev, "battery %d%%, CHGR_STS %#x\n",
++		 DIV_ROUND_CLOSEST(rd(b, FG_SOC) * 100, 255), rd(b, CHGR_STS));
++	return 0;
++}
++
++static const struct of_device_id op2_bat_of_match[] = {
++	{ .compatible = "oneplus,oneplus2-battery" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, op2_bat_of_match);
++
++static struct platform_driver op2_bat_driver = {
++	.probe = op2_bat_probe,
++	.driver = {
++		.name = "op2-battery",
++		.of_match_table = op2_bat_of_match,
++	},
++};
++module_platform_driver(op2_bat_driver);
++
++MODULE_DESCRIPTION("OnePlus 2 PMI8994 minimal charger set-up and battery report");
++MODULE_LICENSE("GPL");

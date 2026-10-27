@@ -1,0 +1,32 @@
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * OnePlus 2: reboot into fastboot / recovery. The OnePlus LK reads a magic
+ * at IMEM 0xfe87f65c on a warm reset (OnePlus kernel msm-poweroff.c:
+ * restart_reason, from qcom,msm-imem-restart_reason at IMEM +0x65c):
+ * 0x77665500 bootloader (fastboot), 0x77665502 recovery (0x77665501 normal
+ * is left out: a plain reboot then keeps a magic written by hand).
+ * Only these 4 bytes are mapped: reading IMEM above them (0xfe87f720) has
+ * reset the phone. Needs reboot=warm on the command line.
+ */
+&soc {
+	imem_restart_reason: syscon@fe87f65c {
+		compatible = "syscon", "simple-mfd";
+		reg = <0xfe87f65c 0x4>;
+
+		reboot-mode {
+			compatible = "syscon-reboot-mode";
+			offset = <0x0>;
+			mode-bootloader = <0x77665500>;
+			mode-recovery = <0x77665502>;
+		};
+	};
+};
+
+/*
+ * The PMIC keeps its own reboot reason (pm8994 PON: bootloader 2, recovery
+ * 1) and LK reads it on every boot: clear it once the kernel is up (patch
+ * 0016), or a plain reboot repeats the last "reboot recovery".
+ */
+&pm8994_pon {
+	qcom,clear-reboot-reason;
+};

@@ -1,0 +1,98 @@
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * OnePlus 2: USB 2.0 PHY (QUSB2), DTS_DEFINES=OP2_USBPHY.
+ *
+ * Mainline msm8994.dtsi has no USB PHY: the controller relies on LK having
+ * set the PHY up, which LK only does in fastboot. From a cold boot the gadget
+ * binds but the host sees nothing.
+ *
+ * OnePlus msm8994.dtsi:1992: qusb@f9b39000 "qcom,qusb2phy", reg 0x17f,
+ * vdd = pm8994_s2_corner, vdda18 = pm8994_l6 (1.8 V), vdda33 = pm8994_l24
+ * (3.075 V), clocks ln_bb_clk (ref), gcc_usb_phy_cfg_ahb2phy_clk,
+ * gcc_qusb2_phy_reset; qcom,qusb-tune = <0xa08391d5>.
+ * Same first-generation QUSB2 as msm8996, but other values: patch 0017 adds
+ * qcom,msm8994-qusb2-phy with what LK leaves on a working phone
+ * (gemini/usb-61-qusb2-a.md), differential ref clock (ln_bb), no lock bit.
+ */
+
+/*
+ * Supplies (OnePlus msm8994-regulator.dtsi:164-169, 348-353): L6 1.8 V
+ * (vdda18) and L24 3.075-3.15 V (vdda33). LK turns them on only in fastboot;
+ * after a normal boot the PHY has no power and the host never sees the
+ * device (PC: no connect at all). The first try (op2-s17-usb) set them too,
+ * with the msm8996 table and clock scheme, and reset the phone; it is not
+ * known which of the two did it, so test this from RAM first.
+ */
+&rpm_requests {
+	regulators-0 {
+		pm8994_l6: l6 {
+			regulator-min-microvolt = <1800000>;
+			regulator-max-microvolt = <1800000>;
+		};
+
+		pm8994_l24: l24 {
+			regulator-min-microvolt = <3075000>;
+			regulator-max-microvolt = <3150000>;
+		};
+	};
+};
+
+&soc {
+	qusb2phy: phy@f9b39000 {
+		compatible = "qcom,msm8994-qusb2-phy";	/* patch 0017 */
+		reg = <0xf9b39000 0x180>;
+		#phy-cells = <0>;
+
+		clocks = <&gcc GCC_USB_PHY_CFG_AHB2PHY_CLK>,
+			 <&rpmcc RPM_SMD_LN_BB_CLK>;
+		clock-names = "cfg_ahb", "ref";
+
+		resets = <&gcc QUSB2_PHY_RESET>;
+
+		vdda-pll-supply = <&pm8994_l6>;
+		vdda-phy-dpdm-supply = <&pm8994_l24>;
+	};
+};
+
+&usb3 {
+	/*
+	 * dwc3-qcom forces "VBUS valid" (QSCRATCH_HS_PHY_CTRL UTMI_OTG_VBUS_VALID |
+	 * SW_SESSVLD_SEL) only when the glue node itself is peripheral; LK sets
+	 * those bits in fastboot, so without this the controller stays "not
+	 * attached" after a normal boot.
+	 */
+	dr_mode = "peripheral";
+
+	/*
+	 * The USB3 (SS) PHY: after a normal boot GCC still holds it in reset
+	 * (USB3_PHY_BCR 0x1400 and USB3PHY_PHY_BCR 0x1404 = 1) with its aux
+	 * clock off (0x1408); LK releases both only for fastboot, the boot
+	 * where USB works (register dumps 2026-10-27). The legacy glue enables
+	 * every clock and toggles every reset listed here.
+	 */
+#ifdef OP2_USB3_AUX
+	clocks = <&gcc GCC_USB30_MASTER_CLK>,
+		 <&gcc GCC_SYS_NOC_USB3_AXI_CLK>,
+		 <&gcc GCC_USB30_SLEEP_CLK>,
+		 <&gcc GCC_USB30_MOCK_UTMI_CLK>,
+		 <&gcc GCC_USB3_PHY_AUX_CLK>;
+	clock-names = "core", "iface", "sleep", "mock_utmi", "phy_aux";
+#ifdef OP2_USB3_AUX_RATE
+	/* s69/s70: with this rate set the phone reset at boot */
+	assigned-clocks = <&gcc GCC_USB30_MOCK_UTMI_CLK>,
+			  <&gcc GCC_USB30_MASTER_CLK>,
+			  <&gcc USB3_PHY_AUX_CLK_SRC>;
+	assigned-clock-rates = <19200000>, <120000000>, <1200000>;
+#endif
+#endif
+#ifdef OP2_USB3_RESETS
+	resets = <&gcc USB3_PHY_RESET>, <&gcc USB3PHY_PHY_RESET>;
+	/* only release them: asserting undoes LK's PHY set-up (s69 lost USB) */
+	qcom,deassert-only-resets;
+#endif
+
+	usb@f9200000 {
+		phys = <&qusb2phy>;
+		phy-names = "usb2-phy";
+	};
+};

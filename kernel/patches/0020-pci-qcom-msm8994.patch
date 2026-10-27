@@ -1,0 +1,125 @@
+From: Matt
+Subject: [PATCH] PCI: qcom: add MSM8994
+
+OnePlus 2 bring-up: MSM8994's PCIe0 (Wi-Fi QCA6174) has the apq8084 (1.0.0)
+controller. As the CAF pci-msm.c drives it: gcc-msm8994 exposes no
+controller reset (optional here), the PHY is powered up through
+PARF_PHY_CTRL, PARF_SYS_CTRL takes 0x365e, and link training is started
+through PARF_LTSSM (as on 2.3.2), not ELBI.
+It also makes the TZ restore_sec_config call CAF does (qcom,scm-dev-id).
+v2: DBI base 0 and a 16 MiB slave address space before the PHY, as CAF msm_pcie_enable.
+---
+--- a/drivers/pci/controller/dwc/pcie-qcom.c	2026-10-27 15:55:08.787969095 +0100
++++ b/drivers/pci/controller/dwc/pcie-qcom.c	2026-10-27 15:55:08.803479738 +0100
+@@ -12,6 +12,7 @@
+ #include <linux/crc8.h>
+ #include <linux/debugfs.h>
+ #include <linux/delay.h>
++#include <linux/firmware/qcom/qcom_scm.h>
+ #include <linux/gpio/consumer.h>
+ #include <linux/interconnect.h>
+ #include <linux/interrupt.h>
+@@ -629,6 +630,32 @@
+ 	return PTR_ERR_OR_ZERO(res->core);
+ }
+ 
++/*
++ * MSM8994 (OnePlus 2 bring-up): the apq8084 (1.0.0) controller, as the CAF
++ * pci-msm.c drives it (msm_pcie_enable): no controller reset exposed by
++ * gcc-msm8994 (optional here), PHY powered up through PARF_PHY_CTRL, PARF
++ * SYS_CTRL 0x365e, link training through PARF_LTSSM as on 2.3.2.
++ */
++static int qcom_pcie_get_resources_msm8994(struct qcom_pcie *pcie)
++{
++	struct qcom_pcie_resources_1_0_0 *res = &pcie->res.v1_0_0;
++	struct dw_pcie *pci = pcie->pci;
++	struct device *dev = pci->dev;
++
++	res->vdda = devm_regulator_get(dev, "vdda");
++	if (IS_ERR(res->vdda))
++		return PTR_ERR(res->vdda);
++
++	res->num_clks = devm_clk_bulk_get_all(dev, &res->clks);
++	if (res->num_clks < 0) {
++		dev_err(dev, "Failed to get clocks\n");
++		return res->num_clks;
++	}
++
++	res->core = devm_reset_control_get_optional_exclusive(dev, "core");
++	return PTR_ERR_OR_ZERO(res->core);
++}
++
+ static void qcom_pcie_deinit_1_0_0(struct qcom_pcie *pcie)
+ {
+ 	struct qcom_pcie_resources_1_0_0 *res = &pcie->res.v1_0_0;
+@@ -673,6 +700,36 @@
+ 	return ret;
+ }
+ 
++static int qcom_pcie_init_msm8994(struct qcom_pcie *pcie)
++{
++	u32 val;
++	int ret;
++
++	ret = qcom_pcie_init_1_0_0(pcie);
++	if (ret)
++		return ret;
++
++	/* PHY power on (CAF: PARF_PHY_CTRL bit 0 cleared before PHY init) */
++	val = readl(pcie->parf + PARF_PHY_CTRL);
++	val &= ~PHY_TEST_PWR_DOWN;
++	writel(val, pcie->parf + PARF_PHY_CTRL);
++
++	/* CAF value for this controller */
++	writel(0x365e, pcie->parf + PARF_SYS_CTRL);
++
++	/* CAF msm_pcie_enable (pci-msm.c:3293-3299), before the PHY: DBI at
++	 * offset 0, 16 MiB slave address space */
++	writel(0, pcie->parf + PARF_DBI_BASE_ADDR);
++	writel(SZ_16M, pcie->parf + PARF_SLV_ADDR_SPACE_SIZE);
++
++	/* CAF msm_pcie_restore_sec_config: TZ set-up for this controller */
++	if (!of_property_read_u32(pcie->pci->dev->of_node, "qcom,scm-dev-id", &val))
++		dev_info(pcie->pci->dev, "TZ restore_sec_cfg(%u): %d\n", val,
++			 qcom_scm_restore_sec_cfg(val, 0));
++
++	return 0;
++}
++
+ static int qcom_pcie_post_init_1_0_0(struct qcom_pcie *pcie)
+ {
+ 	qcom_pcie_configure_dbi_base(pcie);
+@@ -1526,6 +1583,14 @@
+ };
+ 
+ /* Qcom IP rev.: 2.3.2	Synopsys IP rev.: 4.21a */
++static const struct qcom_pcie_ops ops_msm8994 = {
++	.get_resources = qcom_pcie_get_resources_msm8994,
++	.init = qcom_pcie_init_msm8994,
++	.post_init = qcom_pcie_post_init_1_0_0,
++	.deinit = qcom_pcie_deinit_1_0_0,
++	.ltssm_enable = qcom_pcie_2_3_2_ltssm_enable,
++};
++
+ static const struct qcom_pcie_ops ops_2_3_2 = {
+ 	.get_resources = qcom_pcie_get_resources_2_3_2,
+ 	.init = qcom_pcie_init_2_3_2,
+@@ -1595,6 +1660,10 @@
+ 	.ops = &ops_1_0_0,
+ };
+ 
++static const struct qcom_pcie_cfg cfg_msm8994 = {
++	.ops = &ops_msm8994,
++};
++
+ static const struct qcom_pcie_cfg cfg_1_9_0 = {
+ 	.ops = &ops_1_9_0,
+ };
+@@ -2466,6 +2535,7 @@
+ 	{ .compatible = "qcom,hawi-pcie", .data = &cfg_1_9_0 },
+ 	{ .compatible = "qcom,pcie-apq8064", .data = &cfg_2_1_0 },
+ 	{ .compatible = "qcom,pcie-apq8084", .data = &cfg_1_0_0 },
++	{ .compatible = "qcom,pcie-msm8994", .data = &cfg_msm8994 },
+ 	{ .compatible = "qcom,pcie-ipq4019", .data = &cfg_2_4_0 },
+ 	{ .compatible = "qcom,pcie-ipq5018", .data = &cfg_2_9_0 },
+ 	{ .compatible = "qcom,pcie-ipq6018", .data = &cfg_2_9_0 },
