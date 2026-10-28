@@ -1,0 +1,133 @@
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * OnePlus 2 (DTS_DEFINES="OP2_ADSP OP2_A_I2C OP2_AUDIO"): loudspeaker.
+ *
+ * The OnePlus kernel (sound/soc/msm/msm8994.c, VENDOR_EDIT zhiguang.su) plays
+ * through the ADSP on the quaternary MI2S, SoC as master, 48 kHz S16_LE, into
+ * an NXP TFA9890 on BLSP2 QUP5 I2C at 0x36 (msm8994-mtp.dtsi; REV 0x80 read
+ * on the phone). Pins (msm8994-pinctrl.dtsi): GPIO 57 MCLK, 58 SCK, 59 WS,
+ * 60 SD0 (rx line 0: msm-mi2s-rx-lines = <1>), function 1, 8 mA active.
+ * The WCD9330 codec (earpiece, mics, jack) has no mainline driver.
+ *
+ * Mainline: APR services on the ADSP SMD edge as on msm8996, and the msm8916
+ * qdsp6 card (q6afe MI2S with the old LPAIF_BIT_CLK clock API), without its
+ * msm8916 iomux registers (patch 0029).
+ */
+
+#include <dt-bindings/soc/qcom,apr.h>
+#include <dt-bindings/sound/qcom,q6afe.h>
+#include <dt-bindings/sound/qcom,q6asm.h>
+
+&adsp_smd {
+	apr {
+		compatible = "qcom,apr-v2";
+		qcom,smd-channels = "apr_audio_svc";
+		qcom,domain = <APR_DOMAIN_ADSP>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		service@3 {
+			reg = <APR_SVC_ADSP_CORE>;
+			compatible = "qcom,q6core";
+		};
+
+		q6afe: service@4 {
+			compatible = "qcom,q6afe";
+			reg = <APR_SVC_AFE>;
+			q6afedai: dais {
+				compatible = "qcom,q6afe-dais";
+				#address-cells = <1>;
+				#size-cells = <0>;
+				#sound-dai-cells = <1>;
+
+				dai@22 {
+					reg = <QUATERNARY_MI2S_RX>;
+					qcom,sd-lines = <0>;
+				};
+			};
+		};
+
+		q6asm: service@7 {
+			compatible = "qcom,q6asm";
+			reg = <APR_SVC_ASM>;
+			q6asmdai: dais {
+				compatible = "qcom,q6asm-dais";
+				#address-cells = <1>;
+				#size-cells = <0>;
+				#sound-dai-cells = <1>;
+
+				dai@0 {
+					reg = <MSM_FRONTEND_DAI_MULTIMEDIA1>;
+					direction = <Q6ASM_DAI_RX>;
+				};
+			};
+		};
+
+		q6adm: service@8 {
+			compatible = "qcom,q6adm";
+			reg = <APR_SVC_ADM>;
+			q6routing: routing {
+				compatible = "qcom,q6adm-routing";
+				#sound-dai-cells = <0>;
+			};
+		};
+	};
+};
+
+&blsp2_i2c5 {
+	speaker_amp: audio-amplifier@36 {
+		compatible = "nxp,tfa9890";
+		reg = <0x36>;
+		#sound-dai-cells = <0>;
+		sound-name-prefix = "Speaker";
+	};
+};
+
+&tlmm {
+	quat_mi2s_default: quat-mi2s-default-state {
+		pins = "gpio57", "gpio58", "gpio59", "gpio60";
+		function = "qua_mi2s";
+		drive-strength = <8>;
+		bias-disable;
+	};
+
+	quat_mi2s_sleep: quat-mi2s-sleep-state {
+		pins = "gpio57", "gpio58", "gpio59", "gpio60";
+		function = "qua_mi2s";
+		drive-strength = <2>;
+		bias-pull-down;
+	};
+};
+
+/ {
+	sound {
+		compatible = "qcom,msm8916-qdsp6-sndcard";
+		model = "OnePlus2";
+
+		pinctrl-0 = <&quat_mi2s_default>;
+		pinctrl-1 = <&quat_mi2s_sleep>;
+		pinctrl-names = "default", "sleep";
+
+		frontend0-dai-link {
+			link-name = "MultiMedia1";
+
+			cpu {
+				sound-dai = <&q6asmdai MSM_FRONTEND_DAI_MULTIMEDIA1>;
+			};
+		};
+
+		backend0-dai-link {
+			link-name = "Quaternary MI2S";
+
+			cpu {
+				sound-dai = <&q6afedai QUATERNARY_MI2S_RX>;
+			};
+			platform {
+				sound-dai = <&q6routing>;
+			};
+			codec {
+				sound-dai = <&speaker_amp>;
+			};
+		};
+	};
+};

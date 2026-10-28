@@ -1,0 +1,36 @@
+From: Matt
+Subject: [PATCH] drm/msm: OnePlus 2 GPU on physical addresses behind its SMMU
+
+msm.op2_gpu_phys=1 (with msm.allow_vram_carveout=1): no GPU address space
+while the GPU keeps its SMMU attachment. On the OnePlus 2 the attachment is
+what makes the VBIF readable (s87), but TZ refuses the secure set-up so the
+GPU stream is not translated. Off by default. Not for upstream.
+---
+--- a/drivers/gpu/drm/msm/msm_gpu.c
++++ b/drivers/gpu/drm/msm/msm_gpu.c
+@@ -850,6 +850,15 @@
+ 	return aspace;
+ }
+ 
++/*
++ * OnePlus 2 (msm.op2_gpu_phys=1 with msm.allow_vram_carveout=1): the GPU stays
++ * attached to its SMMU (the attach is what makes the VBIF readable, s87) but
++ * gets no address space: TZ refuses the secure set-up, so the SMMU does not
++ * route the GPU's stream to our context banks and passes physical addresses.
++ */
++static bool op2_gpu_phys;
++module_param(op2_gpu_phys, bool, 0644);
++
+ int msm_gpu_init(struct drm_device *drm, struct platform_device *pdev,
+ 		struct msm_gpu *gpu, const struct msm_gpu_funcs *funcs,
+ 		const char *name, struct msm_gpu_config *config)
+@@ -943,7 +952,8 @@
+ 	msm_devfreq_init(gpu);
+ 
+ 
+-	gpu->aspace = gpu->funcs->create_address_space(gpu, pdev);
++	gpu->aspace = op2_gpu_phys ? NULL :
++		gpu->funcs->create_address_space(gpu, pdev);
+ 
+ 	if (gpu->aspace == NULL) {
+ 		DRM_DEV_INFO(drm->dev, "%s: no IOMMU, fallback to VRAM carveout!\n", name);

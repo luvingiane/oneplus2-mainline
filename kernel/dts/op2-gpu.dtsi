@@ -91,6 +91,29 @@
 		reg-names = "kgsl_3d0_reg_memory";
 		interrupts = <GIC_SPI 33 IRQ_TYPE_LEVEL_HIGH>;
 		interrupt-names = "kgsl_3d0_irq";
+#ifdef OP2_GPU_RPMCLK
+		/*
+		 * RPM-owned clocks the GPU path needs: the gfx3d source (msm8994's
+		 * GPU core clock comes from RPM), OCMEM GX and the MMSS NoC AHB.
+		 * Nobody votes them otherwise; RBBM answers without them but the
+		 * VBIF read resets the phone (s84, 2026-10-27). msm enables every
+		 * clock listed here.
+		 */
+		clocks = <&mmcc OXILI_GFX3D_CLK>,
+			 <&mmcc OXILICX_AHB_CLK>,
+			 <&mmcc OXILI_RBBMTIMER_CLK>,
+			 <&mmcc OCMEMCX_OCMEMNOC_CLK>,
+			 <&rpmcc RPM_SMD_GFX3D_CLK_SRC>,
+			 <&rpmcc RPM_SMD_OCMEMGX_CLK>,
+			 <&rpmcc RPM_SMD_MMSSNOC_AHB_CLK>;
+		clock-names = "core",
+			      "iface",
+			      "rbbmtimer",
+			      "mem_iface",
+			      "gfx3d_rpm",
+			      "ocmemgx",
+			      "mmssnoc_ahb";
+#else
 		clocks = <&mmcc OXILI_GFX3D_CLK>,
 			 <&mmcc OXILICX_AHB_CLK>,
 			 <&mmcc OXILI_RBBMTIMER_CLK>,
@@ -99,6 +122,7 @@
 			      "iface",
 			      "rbbmtimer",
 			      "mem_iface";
+#endif
 		power-domains = <&mmcc OXILI_GX_GDSC>;
 		/*
 		 * Both banks: the OnePlus DT gives bank 0 SIDs <0 1>, but with bank 0

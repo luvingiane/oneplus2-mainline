@@ -1,0 +1,50 @@
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * OnePlus 2 (DTS_DEFINES=OP2_ADSP): the audio DSP (LPASS Q6), started by
+ * TrustZone (PAS id 1) from adsp.mdt + adsp.b00-b15 (modem partition, image/).
+ *
+ * OnePlus/CAF msm8994.dtsi: qcom,lpass@fe200000 (pil-tz-generic), watchdog
+ * SPI 162 rising, pas-id 1, smem-id 423, proxy vdd_cx; SMD edge 1 "adsp" on
+ * SPI 156 with APCS bit 8 (smd-irq-bitmask 0x100). The mainline driver data
+ * for "qcom,msm8226-adsp-pil" is the msm8996 one: adsp.mdt, pas_id 1, crash
+ * reason smem 423, proxy power domain "cx". Layout copied from msm8996.dtsi.
+ */
+
+/ {
+	adsp_pil: remoteproc@fe200000 {
+		compatible = "qcom,msm8226-adsp-pil";
+		reg = <0 0xfe200000 0 0x100>;
+
+		interrupts-extended = <&intc GIC_SPI 162 IRQ_TYPE_EDGE_RISING>,
+				      <&adsp_smp2p_in 0 IRQ_TYPE_EDGE_RISING>,
+				      <&adsp_smp2p_in 1 IRQ_TYPE_EDGE_RISING>,
+				      <&adsp_smp2p_in 2 IRQ_TYPE_EDGE_RISING>,
+				      <&adsp_smp2p_in 3 IRQ_TYPE_EDGE_RISING>;
+		interrupt-names = "wdog", "fatal", "ready",
+				  "handover", "stop-ack";
+
+		clocks = <&rpmcc RPM_SMD_XO_CLK_SRC>;
+		clock-names = "xo";
+
+		power-domains = <&rpmpd MSM8994_VDDCX>;
+		power-domain-names = "cx";
+
+		/*
+		 * Not adsp_mem: CAF loads the ADSP into peripheral_mem (lpass node
+		 * linux,contiguous-region), 0xca00000 + 31 MiB; with adsp_mem
+		 * (0xc9400000) TZ refuses the PAS memory set-up (-EINVAL, s92).
+		 */
+		memory-region = <&peripheral_region>;
+
+		qcom,smem-states = <&adsp_smp2p_out 0>;
+		qcom,smem-state-names = "stop";
+
+		adsp_smd: smd-edge {
+			interrupts = <GIC_SPI 156 IRQ_TYPE_EDGE_RISING>;
+			label = "lpass";
+			mboxes = <&apcs 8>;
+			qcom,smd-edge = <1>;
+			qcom,remote-pid = <2>;
+		};
+	};
+};

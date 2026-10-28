@@ -463,5 +463,13 @@
 #include "op2-smp.dtsi"
 #endif
 
+#ifdef OP2_ADSP
+#include "op2-adsp.dtsi"
+#endif
+
+#ifdef OP2_AUDIO
+#include "op2-audio.dtsi"
+#endif
+
 #include "op2-battery.dtsi"
 #include "op2-reboot.dtsi"

@@ -1,0 +1,57 @@
+From: Matt
+Subject: [PATCH] ASoC: qcom: apq8016_sbc: make the MI2S iomux registers optional
+
+The msm8916 qdsp6 card is also the generic "q6 MI2S + I2C codec" card for
+older DSP firmware (LPAIF_BIT_CLK). On msm8994 (OnePlus 2: quaternary MI2S
+to a TFA9890 amplifier) there are no msm8916 mic/spkr iomux registers;
+the LPASS mode mux selects I2S after reset. Without "mic-iomux" in reg,
+skip the routing writes.
+---
+--- a/sound/soc/qcom/apq8016_sbc.c
++++ b/sound/soc/qcom/apq8016_sbc.c
+@@ -65,6 +65,13 @@
+ 	int i, rval;
+ 	u32 value;
+ 
++	/*
++	 * No iomux registers given (msm8994: the LPASS mode mux already
++	 * selects I2S after reset): leave the TLMM routing as it is.
++	 */
++	if (!pdata->mic_iomux || !pdata->spkr_iomux)
++		goto skip_iomux;
++
+ 	switch (mi2s) {
+ 	case MI2S_PRIMARY:
+ 		writel(readl(pdata->spkr_iomux) | SPKR_CTL_PRI_WS_SLAVE_SEL_11,
+@@ -99,6 +106,7 @@
+ 
+ 	}
+ 
++skip_iomux:
+ 	if (!pdata->jack_setup) {
+ 		struct snd_jack *jack;
+ 
+@@ -312,13 +320,16 @@
+ 	if (ret)
+ 		return ret;
+ 
+-	data->mic_iomux = devm_platform_ioremap_resource_byname(pdev, "mic-iomux");
+-	if (IS_ERR(data->mic_iomux))
+-		return PTR_ERR(data->mic_iomux);
+-
+-	data->spkr_iomux = devm_platform_ioremap_resource_byname(pdev, "spkr-iomux");
+-	if (IS_ERR(data->spkr_iomux))
+-		return PTR_ERR(data->spkr_iomux);
++	/* optional: msm8994 (OnePlus 2) has no such registers to set */
++	if (platform_get_resource_byname(pdev, IORESOURCE_MEM, "mic-iomux")) {
++		data->mic_iomux = devm_platform_ioremap_resource_byname(pdev, "mic-iomux");
++		if (IS_ERR(data->mic_iomux))
++			return PTR_ERR(data->mic_iomux);
++
++		data->spkr_iomux = devm_platform_ioremap_resource_byname(pdev, "spkr-iomux");
++		if (IS_ERR(data->spkr_iomux))
++			return PTR_ERR(data->spkr_iomux);
++	}
+ 
+ 	snd_soc_card_set_drvdata(card, data);
+ 
