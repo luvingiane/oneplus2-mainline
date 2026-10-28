@@ -21,10 +21,10 @@ on-phone tools and the complete bring-up diary.
 | Touchscreen, keys, alert slider | works | slider = `gpio-keys` F13/F15 |
 | USB (device, NCM network + serial) | works when started from fastboot | after a normal boot the PC does not see the phone yet (see LOG.md) |
 | Battery | works | `kernel/patches/0013` |
-| Wi-Fi (QCA6174 on PCIe) | not yet | PCIe PHY PLL does not lock |
+| Wi-Fi (QCA6174 on PCIe) | not yet | PCIe PHY: aux clock and PHY reset fixed (0028, 0020), PLL still does not lock |
 | Bluetooth | not yet | chip does not answer |
-| Audio | not yet | needs the ADSP |
-| GPU (Adreno 430) | in progress | TrustZone refuses the GPU SMMU set-up; Linux 6.12 with a VRAM carveout binds the GPU (`/dev/dri/renderD128`), first use still resets the phone |
+| Audio | loudspeaker works | ADSP boots (`op2-adsp.dtsi`), q6 quaternary MI2S -> TFA9890 amplifier (`op2-audio.dtsi`, patch 0029); the WCD9330 codec (mics, earpiece, jack) has no mainline driver |
+| GPU (Adreno 430) | works on 6.12 | GPU SMMU attached + physical addresses (`patches-612/0104`, `msm.op2_gpu_phys=1`), Mesa freedreno FD430; GMEM (OCMEM) still refused by TrustZone: use `FD_MESA_DEBUG=sysmem` |
 
 Full per-component state: [STATUS.md](STATUS.md). Day-by-day work with commands,
 register dumps and results: [LOG.md](LOG.md).

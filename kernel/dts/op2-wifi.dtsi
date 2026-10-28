@@ -71,8 +71,14 @@
 			 <&gcc PCIE_0_PHY_LDO>,
 			 <&gcc GCC_PCIE_0_PIPE_CLK>;
 		clock-names = "ref", "ldo", "pipe";
+#ifdef OP2_WIFI_PIPE_RESET
+		/* retry of s63 now that the aux clock runs (patch 0028) */
+		resets = <&gcc PCIE_PHY_0_RESET>, <&gcc PCIE_PHY_0_PHY_RESET>;
+		reset-names = "phy", "pipe";
+#else
 		resets = <&gcc PCIE_PHY_0_RESET>;
 		reset-names = "phy";
+#endif
 		/*
 		 * CAF also deasserts PCIE_PHY_0_PHY_BCR (0x1B14, still asserted
 		 * after boot) before the pipe clock. Passing it here as
@@ -117,6 +123,11 @@
 			 <&gcc GCC_PCIE_0_SLV_AXI_CLK>,
 			 <&gcc GCC_PCIE_0_AUX_CLK>;
 		clock-names = "iface", "master_bus", "slave_bus", "aux";
+		/*
+		 * CAF runs the aux clock at 1.01 MHz: set by patch 0020 in init, with
+		 * the GDSC on (patch 0027 makes the rate settable). Not assigned-clocks:
+		 * set at device creation, with the GDSC off, the branch stayed off (s89).
+		 */
 		power-domains = <&gcc PCIE_0_GDSC>;
 		vdda-supply = <&pm8994_l28>;
 

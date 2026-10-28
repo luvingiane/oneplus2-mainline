@@ -21,10 +21,10 @@ immagini di avvio, piccoli programmi per il telefono e il diario completo del la
 | Touchscreen, tasti, slider | funziona | slider = `gpio-keys` F13/F15 |
 | USB (dispositivo, rete NCM + seriale) | funziona se avviato da fastboot | dopo un avvio normale il PC non vede ancora il telefono (vedi LOG.md) |
 | Batteria | funziona | `kernel/patches/0013` |
-| Wi-Fi (QCA6174 su PCIe) | non ancora | il PLL del PHY PCIe non si aggancia |
+| Wi-Fi (QCA6174 su PCIe) | non ancora | PHY PCIe: clock aux e reset del PHY sistemati (0028, 0020), il PLL non si aggancia ancora |
 | Bluetooth | non ancora | il chip non risponde |
-| Audio | non ancora | serve l'ADSP |
-| GPU (Adreno 430) | in corso | TrustZone rifiuta la configurazione della SMMU della GPU; Linux 6.12 con un carveout VRAM aggancia la GPU (`/dev/dri/renderD128`), ma al primo uso il telefono si resetta |
+| Audio | altoparlante funziona | ADSP avviato (`op2-adsp.dtsi`), MI2S quaternario q6 -> amplificatore TFA9890 (`op2-audio.dtsi`, patch 0029); il codec WCD9330 (microfoni, capsula, jack) non ha driver mainline |
+| GPU (Adreno 430) | funziona su 6.12 | SMMU della GPU collegata + indirizzi fisici (`patches-612/0104`, `msm.op2_gpu_phys=1`), Mesa freedreno FD430; la GMEM (OCMEM) è ancora rifiutata da TrustZone: usare `FD_MESA_DEBUG=sysmem` |
 
 Stato completo per componente: [STATUS.md](STATUS.md). Il lavoro giorno per giorno,
 con comandi, dump dei registri e risultati: [LOG.md](LOG.md) (in inglese).
