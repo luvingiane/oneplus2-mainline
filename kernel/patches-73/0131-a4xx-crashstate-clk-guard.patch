@@ -1,0 +1,20 @@
+--- a/drivers/gpu/drm/msm/adreno/a4xx_gpu.c	2026-10-30 14:09:18.505547682 +0100
++++ b/drivers/gpu/drm/msm/adreno/a4xx_gpu.c
+@@ -634,6 +634,17 @@
+ 	if (!state)
+ 		return ERR_PTR(-ENOMEM);
+ 
++	/* op2 0131: on the OnePlus 2 any GPU register access with the core
++	 * clock off wedges the NoC and the SError takes the whole kernel down
++	 * (s126 crashstate readl -> panic). During a hang the clock may be
++	 * off, so only dump the registers while the core clock is enabled. */
++	if (gpu->core_clk && !__clk_is_enabled(gpu->core_clk)) {
++		dev_warn(&gpu->pdev->dev,
++			 "op2: core clock off, skipping GPU register dump in crashstate\n");
++		state->rbbm_status = 0xdeadbeef;
++		return state;
++	}
++
+ 	adreno_gpu_state_get(gpu, state);
+ 
+ 	state->rbbm_status = gpu_read(gpu, REG_A4XX_RBBM_STATUS);

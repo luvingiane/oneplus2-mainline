@@ -17,3 +17,8 @@ keys/
 gemini/
 firmware/
 rootfs-overlay/usr/lib/firmware/
+
+# agent rules, task reports and reviews: never publish (privacy + noise)
+gemini/
+gemini/worktrees/
+*.claude.md

@@ -56,6 +56,19 @@ log "cmdline: $(cat /proc/cmdline)"
 log "cpus online: $(cat /sys/devices/system/cpu/online)  mem: $(awk '/MemTotal/{print $2" kB"}' /proc/meminfo)"
 log "board-id: $(od -An -tu4 /proc/device-tree/qcom,board-id 2>/dev/null)"
 ls /sys/fs/pstore/ 2>/dev/null | grep -q . && log "pstore from the previous boot: $(ls /sys/fs/pstore | tr '\n' ' ')"
+# dump the previous boot's pstore (panic log) to the console: it lands on
+# tty0 (screen) and ttyGS0 (host serial) even when USB networking is down.
+# Done again later in the background: the host only opens the ACM port once
+# the gadget has bound, so the early dump would be lost on the serial side.
+dump_pstore() {
+	for f in /sys/fs/pstore/*; do
+		[ -f "$f" ] || continue
+		log "pstore $f:"
+		tail -c 6000 "$f" > /dev/kmsg 2>/dev/null
+	done
+}
+dump_pstore
+( sleep 25; dump_pstore; sleep 30; dump_pstore; sleep 30; dump_pstore ) &
 
 PROBE=$(arg op2.probe)
 STOP=$(arg op2.stop)
@@ -86,12 +99,13 @@ fi
 # B (target) 172.16.42.x, A (broken screen, helper agents) 172.16.44.x.
 SERIAL=$(arg androidboot.serialno)
 case "$SERIAL" in
-SECOND_PHONE_SERIAL) NET=44; MACID=0a ;;
+7485b821) NET=44; MACID=0a ;;
 *)        NET=42; MACID=0b ;;
 esac
 PHONE_IP=172.16.$NET.1; HOST_IP=172.16.$NET.2
 
 usb_up() {
+	local q=$1
 	G=/sys/kernel/config/usb_gadget/op2
 	udc=$(ls /sys/class/udc 2>/dev/null | head -1)
 	[ -n "$udc" ] || return 1
@@ -106,14 +120,23 @@ usb_up() {
 	echo 02:00:00:$MACID:02:02 > $G/functions/ncm.usb0/host_addr
 	ln -s $G/functions/ncm.usb0 $G/configs/c.1/ 2>/dev/null
 	ln -s $G/functions/acm.GS0 $G/configs/c.1/ 2>/dev/null
-	log "usb: gadget built, udc=$udc"
+	[ -z "$q" ] && log "usb: gadget built, udc=$udc"
 	stop_at gadget
 	echo "$udc" > $G/UDC || return 1
-	log "usb: gadget on $udc"; led green 255
+	[ -z "$q" ] && log "usb: gadget on $udc"
+	led green 255
 	stop_at udc
 	return 0
 }
 for i in $(seq 1 20); do usb_up && break; sleep 1; done
+# Retry in the background for a long time: if the dwc3 UDC is not ready during
+# the first 20 s the gadget is never bound, the phone stays up with dead USB
+# and is lost until a physical reboot. This keeps trying instead.
+( for i in $(seq 1 240); do
+    G=/sys/kernel/config/usb_gadget/op2
+    [ -n "$(cat $G/UDC 2>/dev/null)" ] && exit 0
+    usb_up q; sleep 5
+  done ) &
 ip link set lo up
 for i in $(seq 1 10); do ip link show usb0 >/dev/null 2>&1 && break; sleep 1; done
 ip addr add $PHONE_IP/24 dev usb0 && ip link set usb0 up && log "usb0: $PHONE_IP ($SERIAL)"
@@ -215,6 +238,35 @@ if [ -n "$ROOTDEV" ]; then
 	fi
 	log "root: $ROOTDEV not usable (no ext4 or no systemd), staying in the initramfs"
 	umount /newroot 2>/dev/null
+fi
+
+# --- on-phone GPU test (op2.gputest=N seconds): runs with no host at all ----
+# Everything goes to kmsg -> console=ttyGS0 -> the host's /dev/ttyACM*, and to
+# the screen via console=tty0. NEVER read GPU registers (0xfdb...) here: a
+# register read with the GPU clocks off wedges the NoC. clk/regulator debugfs
+# and dmesg are safe.
+GPUT=$(arg op2.gputest)
+if [ -n "$GPUT" ] && [ "$GPUT" != 0 ]; then
+	( sleep 3
+	  i=0; while [ ! -c /dev/dri/card1 ] && [ $i -lt 60 ]; do sleep 1; i=$((i+1)); done
+	  if [ -c /dev/dri/card1 ]; then
+	    log "gputest: card1 up, dd trigger"
+	    dd if=/dev/dri/card1 of=/dev/null bs=4096 count=1 2>/dev/null
+	  else
+	    log "gputest: no /dev/dri/card1 after 60 s"
+	  fi
+	  log "gputest: polling ${GPUT}s"
+	  i=0
+	  while [ $i -lt "$GPUT" ]; do
+	    sleep 1; i=$((i+1))
+	    {
+	      echo "gputest t=$i clk: $(grep -E 'oxili_gfx3d_clk|oxilicx_ahb_clk|ocmemgx_clk|mmssnoc_ahb_clk|oxili_rbbmtimer_clk' /sys/kernel/debug/clk/clk_summary 2>/dev/null | awk '{print $1,$2,$4}' | tr '\n' ';')"
+	      echo "gputest t=$i gdsc: GX=$(devmem 0xfc404024 2>&1) CX=$(devmem 0xfc404034 2>&1) rail: $(grep -iE 'pmi8994_s2|s2b' /sys/kernel/debug/regulator/regulator_summary 2>/dev/null | head -2 | tr '\n' ' ')"
+	      dmesg -c 2>/dev/null | tail -6
+	    } | while IFS= read -r l; do echo "op2boot| $l" > /dev/kmsg; done
+	  done
+	  log "gputest: survived ${GPUT}s"
+	) &
 fi
 
 log "ready. telnet 172.16.42.1  (touch /run/hold to stop the deadman)"
