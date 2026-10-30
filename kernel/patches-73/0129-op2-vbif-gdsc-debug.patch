@@ -1,0 +1,42 @@
+--- a/drivers/gpu/drm/msm/adreno/a4xx_gpu.c	2026-10-30 01:34:23.889075428 +0100
++++ b/drivers/gpu/drm/msm/adreno/a4xx_gpu.c
+@@ -34,6 +34,7 @@
+ #define OP2_GF_NOHWCG	0x1
+ #define OP2_GF_NOPROTECT	0x2
+ #define OP2_GF_NOMEINIT	0x4
++#define OP2_GF_NOVBIF	0x8
+ 
+ /* write + read-back: a read forces the posted write to complete, so a
+  * poison register wedges exactly at the print that follows it */
+@@ -212,6 +213,14 @@
+ 	int i, ret;
+ 
+ 	pr_info("op2dbg: a4xx_hw_init enter\n");
++	{
++		void __iomem *mm = ioremap(0xfd8c0000, 0x6000);
++		if (mm) {
++			pr_info("op2dbg: pre-VBIF GDSC_GX=%08x GDSC_CX=%08x CBCR4028=%08x\n",
++				readl(mm + 0x4024), readl(mm + 0x4034), readl(mm + 0x4028));
++			iounmap(mm);
++		}
++	}
+ 	if (adreno_is_a405(adreno_gpu)) {
+ 		OP2W(REG_A4XX_VBIF_ROUND_ROBIN_QOS_ARB, 0x00000003);
+ 	} else if (adreno_is_a420(adreno_gpu)) {
+@@ -224,12 +233,16 @@
+ 		OP2W(REG_A4XX_VBIF_IN_WR_LIM_CONF1, 0x00000018);
+ 		OP2W(REG_A4XX_VBIF_ROUND_ROBIN_QOS_ARB, 0x00000003);
+ 	} else if (adreno_is_a430(adreno_gpu)) {
++		if (op2_gflags & OP2_GF_NOVBIF)
++			pr_info("op2dbg: VBIF block SKIPPED (gflags)\n");
++		else {
+ 		OP2W(REG_A4XX_VBIF_GATE_OFF_WRREQ_EN, 0x00000001);
+ 		OP2W(REG_A4XX_VBIF_IN_RD_LIM_CONF0, 0x18181818);
+ 		OP2W(REG_A4XX_VBIF_IN_RD_LIM_CONF1, 0x00000018);
+ 		OP2W(REG_A4XX_VBIF_IN_WR_LIM_CONF0, 0x18181818);
+ 		OP2W(REG_A4XX_VBIF_IN_WR_LIM_CONF1, 0x00000018);
+ 		OP2W(REG_A4XX_VBIF_ROUND_ROBIN_QOS_ARB, 0x00000003);
++		}
+ 	} else {
+ 		BUG();
+ 	}

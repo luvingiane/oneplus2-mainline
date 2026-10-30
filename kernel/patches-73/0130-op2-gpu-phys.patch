@@ -1,0 +1,28 @@
+--- a/drivers/gpu/drm/msm/msm_gpu.c	2026-10-30 02:47:57.693286575 +0100
++++ b/drivers/gpu/drm/msm/msm_gpu.c
+@@ -59,6 +59,13 @@
+ 	return 0;
+ }
+ 
++/* op2 0130: msm.op2_gpu_phys=1 — keep the SMMU attached (the attach unlocks
++ * VBIF) but drop the GPU address space: TZ refuses the secure set-up, so the
++ * SMMU does not translate the GPU stream; use physical addresses instead
++ * (msm.identity_iova=1). Same trick as 6.12 patch-612 0104. */
++static bool op2_gpu_phys;
++module_param_named(op2_gpu_phys, op2_gpu_phys, bool, 0644);
++
+ static int enable_clk(struct msm_gpu *gpu)
+ {
+ 	int ret;
+@@ -1063,6 +1070,11 @@
+ 	msm_devfreq_init(gpu);
+ 
+ 	gpu->vm = gpu->funcs->create_vm(gpu, pdev);
++	if (!IS_ERR(gpu->vm) && op2_gpu_phys) {
++		DRM_DEV_INFO(drm->dev, "%s: op2_gpu_phys=1, dropping address space (physical iova)\n", name);
++		drm_gpuvm_put(gpu->vm);
++		gpu->vm = NULL;
++	}
+ 	if (IS_ERR(gpu->vm)) {
+ 		if (PTR_ERR(gpu->vm) == -ENODEV &&
+ 		    !device_iommu_mapped(&pdev->dev)) {

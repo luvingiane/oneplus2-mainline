@@ -100,6 +100,17 @@ file /root/.ssh/authorized_keys $ROOT/keys/op2_ed25519.pub 0600 0 0
 file /pattern24.raw.gz $B/initramfs/pattern24.raw.gz 0644 0 0
 file /pattern32.raw.gz $B/initramfs/pattern32.raw.gz 0644 0 0
 EOF
+# GPU firmware inside the image. FW=0 builds a "collector" image without it:
+# the adreno probe then fails before hw_init, the phone stays up, and the
+# serial console / pstore of previous GPU-panic boots can be read.
+if [ "${FW:-1}" = 1 ]; then cat >> "$LIST" <<EOF
+dir /lib 0755 0 0
+dir /lib/firmware 0755 0 0
+dir /lib/firmware/qcom 0755 0 0
+file /lib/firmware/qcom/a420_pfp.fw $ROOT/firmware/qcom/a420_pfp.fw 0644 0 0
+file /lib/firmware/qcom/a420_pm4.fw $ROOT/firmware/qcom/a420_pm4.fw 0644 0 0
+EOF
+fi
 [ -x "$SRC/usr/gen_init_cpio" ] || make -C "$SRC" ARCH=arm64 usr/gen_init_cpio >/dev/null
 "$SRC/usr/gen_init_cpio" "$LIST" | gzip -9 > "$B/initramfs.cpio.gz"
 

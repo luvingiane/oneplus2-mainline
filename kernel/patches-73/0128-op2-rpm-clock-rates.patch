@@ -1,0 +1,25 @@
+--- a/drivers/gpu/drm/msm/msm_gpu.c	2026-10-30 01:20:45.541850366 +0100
++++ b/drivers/gpu/drm/msm/msm_gpu.c
+@@ -101,6 +101,22 @@
+ 		pr_info("op2dbg: enable_clk core_rate after poll=%lu (iters=%d)\n",
+ 			r, pi);
+ 	}
++	/* op2 0128: force a real rate on every RPM-owned clock left at INT_MAX
++	 * (ocmemgx, mmssnoc_ahb). At INT_MAX the NoC/VBIF path is effectively
++	 * unclocked and the first VBIF write in a4xx_hw_init bus-stalls even
++	 * with the core clock at 300 MHz (s126nr g7 wedge). */
++	{
++		int ci;
++		for (ci = 0; ci < gpu->nr_clocks; ci++) {
++			unsigned long r = clk_get_rate(gpu->grp_clks[ci].clk);
++			if (r == 2147483647UL || r == 0) {
++				int sr = clk_set_rate(gpu->grp_clks[ci].clk, 300000000);
++				pr_info("op2dbg: enable_clk clk[%d] %s set_rate(300M)=%d now=%lu\n",
++					ci, __clk_get_name(gpu->grp_clks[ci].clk), sr,
++					clk_get_rate(gpu->grp_clks[ci].clk));
++			}
++		}
++	}
+ 	/* let the branch clocks / GDSC settle before hw_init touches VBIF:
+ 	 * on B the first VBIF write in a4xx_hw_init bus-stalls right after
+ 	 * resume if we don't wait (race, s111nr-B panic). */

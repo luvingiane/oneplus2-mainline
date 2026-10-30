@@ -1,0 +1,31 @@
+--- a/drivers/gpu/drm/msm/msm_gpu.c	2026-10-30 00:59:58.461266550 +0100
++++ b/drivers/gpu/drm/msm/msm_gpu.c
+@@ -1153,3 +1153,28 @@
+ 
+ 	platform_set_drvdata(gpu->pdev, NULL);
+ }
++
++/* op2: when op2.crash=fastboot is on the cmdline, set the LK "fastboot"
++ * restart magic in shared IMEM (0xfe87f65c) from a core_initcall — i.e.
++ * BEFORE any driver probe — so that ANY reset (panic during GPU probe,
++ * watchdog, deadman, reboot -f) makes LK enter fastboot instead of booting
++ * the flashed image. The initramfs init writes the same magic, but only once
++ * userspace runs: a probe-time panic used to reboot into the flashed image
++ * and the phone was lost from USB until a physical reboot. */
++#define OP2_IMEM_MAGIC_ADDR	0xfe87f65cUL
++#define OP2_IMEM_FASTBOOT	0x77665500U
++static int __init op2_imem_fastboot_init(void)
++{
++	void __iomem *imem;
++
++	if (!strstr(boot_command_line, "op2.crash=fastboot"))
++		return 0;
++	imem = ioremap(OP2_IMEM_MAGIC_ADDR, 4);
++	if (!imem)
++		return 0;
++	writel(OP2_IMEM_FASTBOOT, imem);
++	mb();
++	pr_info("op2dbg: IMEM fastboot magic set (op2.crash=fastboot)\n");
++	return 0;
++}
++core_initcall(op2_imem_fastboot_init);
