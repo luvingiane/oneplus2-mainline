@@ -3,13 +3,15 @@
  * OnePlus 2 display through mainline MDP5 + DSI, taking over the bootloader's
  * DSI0 PLL.
  *
- * Mainline has the msm8994 DSI 20nm PHY but no 20nm DSI PLL. The bootloader
- * leaves the PLL running for this panel (byte0 and pclk0 RCGs fed straight
- * from it, divider 1, read back from MMCC 0x2000/0x2120). So the PLL outputs
- * are described as fixed clocks at the rates this panel mode needs, and the
- * DSI host / MMCC never reprogram the PLL itself.
+ * Mainline has the msm8994 DSI 20nm PHY but no 20nm DSI PLL driver. Patch
+ * 0142 registers one (dsi_pll_20nm.c) but the clk tree keeps the fixed
+ * clocks below: wiring mmcc to the PHY PLL clocks made the early clk
+ * prepare relock the PLL with the GDSC off and hung the boot (s196 early
+ * builds). With op2.dsipll=1 the PLL is relocked at display enable
+ * (pll_20nm_relock from dsi_20nm_phy_enable, GDSC+PHY on) instead.
  *   panel: 1080x1920 @ 60, h 1080+100+8+82, v 1920+3+2+7, 4 lanes, 24 bpp
  *   pixel = 1270 * 1932 * 60 = 147218 kHz; byte = pixel * 24 / 8 / 4
+ *   VCO = 883.2 MHz -> 883 Mbps/lane
  * Addresses from downstream msm8994-mdss.dtsi / msm8994-mdss-pll.dtsi.
  */
 
@@ -42,6 +44,8 @@
 };
 
 &soc {
+
+
 	/*
 	 * MDP SMMU (downstream mdp_iommu_8994, "qcom,msm-smmu-v1", secure id 1):
 	 * global part owned by TrustZone, context banks from 0xfd9d4000. Only the

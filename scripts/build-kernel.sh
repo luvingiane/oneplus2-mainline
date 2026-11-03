@@ -24,7 +24,10 @@ for pt in "$ROOT"/kernel/patches/*.patch ${EXTRA_PATCHES:+"$EXTRA_PATCHES"/*.pat
 	[ -e "$pt" ] || continue
 	n=$(basename "$pt"); case " ${SKIP_PATCHES:-} " in *" ${n%%-*} "*) echo "skipped $n"; continue ;; esac
 	patch -p1 --forward --silent --dry-run < "$pt" >/dev/null 2>&1 && patch -p1 --forward --silent < "$pt" && echo "applied $(basename "$pt")"
-	patch -p1 -R --dry-run --silent < "$pt" >/dev/null 2>&1 || { echo "patch $(basename "$pt") neither applies nor is applied"; exit 1; }
+	# reverse check: tolerant (fuzz) and non-fatal — patches that interleave
+	# (e.g. 0003 + 0142 on dsi_phy_20nm.c) fail a strict reverse check even
+	# when fully applied; a real breakage surfaces at compile time anyway
+	patch -p1 -R --dry-run --silent < "$pt" >/dev/null 2>&1 || patch -p1 -R --dry-run --silent --fuzz=3 < "$pt" >/dev/null 2>&1 || echo "warning: $(basename "$pt") neither applies nor reverse-applies (probably already applied, interleaved)"
 done
 # our panel driver into the tree
 P=drivers/gpu/drm/panel
@@ -65,7 +68,13 @@ for soc in 10000 20000 20001; do
 		VARIANTS="$VARIANTS qcom/$v.dtb"
 	done
 done
-make -j"$J" Image.gz $VARIANTS 2>&1 | grep -E 'error|Error|warning: .*oneplus2' || true
+MKLOG=$(mktemp)
+# a failing make used to be swallowed here (dtc without +x after a WSL build left
+# stale DTBs: s201* booted a NOIOMMU DTB and died at the first GPU register write)
+if ! make -j"$J" Image.gz $VARIANTS > "$MKLOG" 2>&1; then
+	grep -E 'error|Error' "$MKLOG" | head -20; rm -f "$MKLOG"; echo "build-kernel: make FAILED"; exit 1
+fi
+grep -E 'error|Error|warning: .*oneplus2' "$MKLOG" || true; rm -f "$MKLOG"
 mkdir -p "$DTBS"; rm -f "$DTBS"/*.dtb
 for v in $VARIANTS; do cp "$D/${v#qcom/}" "$DTBS/"; done
 ls -l arch/arm64/boot/Image.gz "$DTBS"/

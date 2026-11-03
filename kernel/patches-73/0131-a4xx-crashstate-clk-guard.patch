@@ -1,3 +1,10 @@
+@@ -1,6 +1,7 @@
+ // SPDX-License-Identifier: GPL-2.0-only
+ /* Copyright (c) 2014 The Linux Foundation. All rights reserved.
+  */
+ #include "a4xx_gpu.h"
++extern bool __clk_is_enabled(struct clk *clk); /* op2 0131 fix: not declared in clk.h on 7.3 */
+ 
 --- a/drivers/gpu/drm/msm/adreno/a4xx_gpu.c	2026-10-30 14:09:18.505547682 +0100
 +++ b/drivers/gpu/drm/msm/adreno/a4xx_gpu.c
 @@ -634,6 +634,17 @@

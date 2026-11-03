@@ -1,0 +1,35 @@
+Video-mode variant of the jd35695 panel (UNTested: B's battery died before a
+clean test — s179/s180 boot attempts all hit the discharged battery).
+Apply on top of the cmd-mode driver + op2-display.dtsi to try video mode:
+it should remove tearing (panel syncs on HSYNC/VSYNC) and allow 60 fps
+(continuous HS stream instead of one slow cmd-mode transfer per commit).
+
+--- a/kernel/panel/panel-oneplus2-jd35695.c
++++ b/kernel/panel/panel-oneplus2-jd35695.c
+@@ -286,8 +286,7 @@
+-	dsi->mode_flags = MIPI_DSI_MODE_VIDEO_BURST | MIPI_DSI_MODE_VIDEO_HSE |
+-			  MIPI_DSI_CLOCK_NON_CONTINUOUS;
++	dsi->mode_flags = MIPI_DSI_MODE_VIDEO | MIPI_DSI_MODE_VIDEO_SYNC_PULSE;
+
+--- a/kernel/dts/op2-display.dtsi
++++ b/kernel/dts/op2-display.dtsi
+@@ panel@0: add before the port subnode, after all properties:
++				/* stock jd35695 1080p60 timing (h 1080+100+8+82,
++				 * v 1920+3+2+7), needed in video mode for HSYNC/VSYNC */
++				display-timings {
++					timing@0 {
++						clock-frequency = <147218000>;
++						hactive = <1080>;
++						hfront-porch = <100>;
++						hback-porch = <82>;
++						hsync-len = <8>;
++						vactive = <1920>;
++						vfront-porch = <3>;
++						vback-porch = <7>;
++						vsync-len = <2>;
++						hsync-active-high;
++						vsync-active-high;
++						de-active-high;
++						pixelclk-active-high;
++					};
++				};

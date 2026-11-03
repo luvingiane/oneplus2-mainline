@@ -1,5 +1,6 @@
-import re, struct, sys
-G = "$HOME/oneplus2/build/linux-7.3/drivers/gpu/drm/msm/generated/"
+import os, re, struct, sys
+# generated register headers of the kernel tree (default: build/linux-7.3 next to tools/)
+G = os.environ.get("MSM_GENERATED", os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "build", "linux-7.3", "drivers", "gpu", "drm", "msm", "generated")) + "/"
 regs = {}
 for l in open(G + "a4xx.xml.h"):
     m = re.match(r"#define REG_A4XX_(\w+)\s+0x([0-9a-f]+)\s*$", l)

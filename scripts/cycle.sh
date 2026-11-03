@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # One unattended test cycle (RAM only, nothing flashed):
-#   fastboot -s "${OP2_SERIAL:?set OP2_SERIAL to your phone's fastboot serial}" boot <img> -> if the USB network comes up, collect logs over it;
+#   fastboot -s "${OP2_SERIAL:?set OP2_SERIAL to your phone serial (see: fastboot devices)}" boot <img> -> if the USB network comes up, collect logs over it;
 #   otherwise wait for the phone to come back to fastboot (the init sets the
 #   IMEM restart reason to fastboot first thing, so a watchdog/panic reset
 #   lands there), RAM-boot TWRP and pull /sys/fs/pstore (our ramoops uses
@@ -15,13 +15,13 @@ out=$ROOT/logs/cycle-$name-$(date +%Y%m%d-%H%M%S); mkdir -p "$out"
 say() { echo "$(date +%T) $*" | tee -a "$out/cycle.txt"; }
 to_fastboot() {
 	for i in $(seq 1 100); do
-		timeout 2 fastboot devices | grep -q "^${OP2_SERIAL:?set OP2_SERIAL to your phone's fastboot serial}" && return 0
-		adb -s "${OP2_SERIAL:?set OP2_SERIAL to your phone's fastboot serial}" get-state 2>/dev/null | grep -qE 'recovery|device' && adb -s "${OP2_SERIAL:?set OP2_SERIAL to your phone's fastboot serial}" reboot bootloader >/dev/null 2>&1
+		timeout 2 fastboot devices | grep -q "^${OP2_SERIAL:?set OP2_SERIAL to your phone serial (see: fastboot devices)}" && return 0
+		adb -s "${OP2_SERIAL:?set OP2_SERIAL to your phone serial (see: fastboot devices)}" get-state 2>/dev/null | grep -qE 'recovery|device' && adb -s "${OP2_SERIAL:?set OP2_SERIAL to your phone serial (see: fastboot devices)}" reboot bootloader >/dev/null 2>&1
 		sleep 3
 	done; return 1
 }
 to_fastboot || { say "phone not in fastboot"; exit 1; }
-say "boot $name"; fastboot -s "${OP2_SERIAL:?set OP2_SERIAL to your phone's fastboot serial}" boot "$IMG" >> "$out/cycle.txt" 2>&1
+say "boot $name"; fastboot -s "${OP2_SERIAL:?set OP2_SERIAL to your phone serial (see: fastboot devices)}" boot "$IMG" >> "$out/cycle.txt" 2>&1
 sleep 8
 for i in $(seq 1 40); do ping -c1 -W1 172.16.42.1 >/dev/null 2>&1 && break; sleep 2; done
 if ping -c1 -W1 172.16.42.1 >/dev/null 2>&1; then
@@ -42,13 +42,13 @@ fi
 to_fastboot || { say "did not come back to fastboot (needs the power key)"; exit 2; }
 if [ ! -s "$out/op2boot.log" ]; then
 	say "fastboot; RAM-boot TWRP to read pstore"
-	fastboot -s "${OP2_SERIAL:?set OP2_SERIAL to your phone's fastboot serial}" boot "$TWRP" >> "$out/cycle.txt" 2>&1
-	for i in $(seq 1 60); do adb -s "${OP2_SERIAL:?set OP2_SERIAL to your phone's fastboot serial}" get-state 2>/dev/null | grep -q recovery && break; sleep 2; done
+	fastboot -s "${OP2_SERIAL:?set OP2_SERIAL to your phone serial (see: fastboot devices)}" boot "$TWRP" >> "$out/cycle.txt" 2>&1
+	for i in $(seq 1 60); do adb -s "${OP2_SERIAL:?set OP2_SERIAL to your phone serial (see: fastboot devices)}" get-state 2>/dev/null | grep -q recovery && break; sleep 2; done
 	adb shell 'mkdir -p /tmp/ps; mount -t pstore pstore /tmp/ps 2>/dev/null; ls -la /tmp/ps' 2>/dev/null | grep -v tzdata | tee -a "$out/cycle.txt"
 	for f in $(adb shell 'ls /tmp/ps' 2>/dev/null | grep -v tzdata | tr -d '\r'); do
 		adb shell "cat /tmp/ps/$f" 2>/dev/null | grep -v tzdata > "$out/pstore-$f"
 	done
 	adb shell 'dmesg | grep -iE "ramoops|pstore|Power-on reason|Power-off reason"' 2>/dev/null | grep -v tzdata >> "$out/cycle.txt"
-	adb -s "${OP2_SERIAL:?set OP2_SERIAL to your phone's fastboot serial}" reboot bootloader >/dev/null 2>&1; to_fastboot
+	adb -s "${OP2_SERIAL:?set OP2_SERIAL to your phone serial (see: fastboot devices)}" reboot bootloader >/dev/null 2>&1; to_fastboot
 fi
 say "done: $out"; ls -l "$out"

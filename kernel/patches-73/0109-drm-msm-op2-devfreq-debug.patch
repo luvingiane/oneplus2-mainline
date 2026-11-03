@@ -1,0 +1,27 @@
+--- a/drivers/gpu/drm/msm/msm_gpu_devfreq.c
++++ b/drivers/gpu/drm/msm/msm_gpu_devfreq.c
+@@ -27,9 +27,13 @@
+ 	 * Note that devfreq_recommended_opp() can modify the freq
+ 	 * to something that actually is in the opp table:
+ 	 */
++	pr_info("op2dbg: devfreq_target enter freq=%lu flags=%u\n", *freq, flags);
+ 	opp = devfreq_recommended_opp(dev, freq, flags);
+-	if (IS_ERR(opp))
++	if (IS_ERR(opp)) {
++		pr_info("op2dbg: devfreq_target no opp\n");
+ 		return PTR_ERR(opp);
++	}
++	pr_info("op2dbg: devfreq_target opp=%lu idle_freq=%lu\n", dev_pm_opp_get_freq(opp), df->idle_freq);
+ 
+ 	trace_msm_gpu_freq_change(dev_pm_opp_get_freq(opp));
+ 
+@@ -48,7 +52,8 @@
+ 		gpu->funcs->gpu_set_freq(gpu, opp, df->suspended);
+ 		mutex_unlock(&df->lock);
+ 	} else {
+-		dev_pm_opp_set_rate(dev, *freq);
++		int rr = dev_pm_opp_set_rate(dev, *freq);
++		pr_info("op2dbg: devfreq_target opp_set_rate(%lu)=%d core_rate=%lu\n", *freq, rr, gpu->core_clk ? clk_get_rate(gpu->core_clk) : 0UL);
+ 	}
+ 
+ 	dev_pm_opp_put(opp);

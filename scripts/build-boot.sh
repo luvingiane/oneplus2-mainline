@@ -66,6 +66,7 @@ EOF
 printf 'root:x:0:0:root:/root:/bin/sh\n' > "$B/initramfs/passwd"
 printf 'root:x:0:\n' > "$B/initramfs/group"
 printf '/bin/sh\n' > "$B/initramfs/shells"
+cp "$ROOT/keys/op2_ed25519.pub" "$B/initramfs/authorized_keys"
 [ -x "$B/dropbearmulti" ] || bash "$ROOT/scripts/build-dropbear.sh"
 LIST=$B/initramfs.list
 cat > "$LIST" <<EOF
@@ -96,7 +97,7 @@ file /etc/group $B/initramfs/group 0644 0 0
 file /etc/shells $B/initramfs/shells 0644 0 0
 dir /root 0700 0 0
 dir /root/.ssh 0700 0 0
-file /root/.ssh/authorized_keys $ROOT/keys/op2_ed25519.pub 0600 0 0
+file /root/.ssh/authorized_keys $B/initramfs/authorized_keys 0600 0 0
 file /pattern24.raw.gz $B/initramfs/pattern24.raw.gz 0644 0 0
 file /pattern32.raw.gz $B/initramfs/pattern32.raw.gz 0644 0 0
 EOF

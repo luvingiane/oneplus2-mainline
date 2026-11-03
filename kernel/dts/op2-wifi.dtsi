@@ -118,11 +118,14 @@
 				<0 0 0 3 &intc GIC_SPI 247 IRQ_TYPE_LEVEL_HIGH>,
 				<0 0 0 4 &intc GIC_SPI 248 IRQ_TYPE_LEVEL_HIGH>;
 
-		clocks = <&gcc GCC_PCIE_0_CFG_AHB_CLK>,
+		/* CAF msm8994.dtsi:872-881 also feeds the host the 125 MHz pipe
+		 * clock (pcie_0_pipe_clk); the DWC core enables it via bulk */
+		clocks = <&gcc GCC_PCIE_0_PIPE_CLK>,
+			 <&gcc GCC_PCIE_0_CFG_AHB_CLK>,
 			 <&gcc GCC_PCIE_0_MSTR_AXI_CLK>,
 			 <&gcc GCC_PCIE_0_SLV_AXI_CLK>,
 			 <&gcc GCC_PCIE_0_AUX_CLK>;
-		clock-names = "iface", "master_bus", "slave_bus", "aux";
+		clock-names = "pipe", "iface", "master_bus", "slave_bus", "aux";
 		/*
 		 * CAF runs the aux clock at 1.01 MHz: set by patch 0020 in init, with
 		 * the GDSC on (patch 0027 makes the rate settable). Not assigned-clocks:

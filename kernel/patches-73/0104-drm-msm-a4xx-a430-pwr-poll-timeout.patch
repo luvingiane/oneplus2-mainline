@@ -1,0 +1,38 @@
+From: Matt
+Subject: [PATCH] drm/msm/a4xx: timeout the A430 power-on poll (7.3 bring-up)
+
+a4xx_pm_resume() polls RBBM_POWER_STATUS until the GPU reports powered
+on, with no timeout. On the OnePlus 2 (kernel 7.3 bring-up) the GPU did
+not come up on the first runtime resume, the read hung the bus and the
+NMI watchdog took the kernel down ("Hard LOCKUP"). Give the poll a
+500 ms timeout and fail the resume with -ETIMEDOUT instead, so a
+power-on failure is a clean error instead of a hard lockup.
+---
+--- a/drivers/gpu/drm/msm/adreno/a4xx_gpu.c
++++ b/drivers/gpu/drm/msm/adreno/a4xx_gpu.c
+@@ -579,11 +579,25 @@
+ 
+ 	if (adreno_is_a430(adreno_gpu)) {
+ 		unsigned int reg;
++		int timeout = 100000; /* 100000 * 5 us = 500 ms */
+ 		/* Set the default register values; set SW_COLLAPSE to 0 */
+ 		gpu_write(gpu, REG_A4XX_RBBM_POWER_CNTL_IP, 0x778000);
+ 		do {
+ 			udelay(5);
+ 			reg = gpu_read(gpu, REG_A4XX_RBBM_POWER_STATUS);
++			if (!--timeout) {
++				/*
++				 * OnePlus 2 (7.3 bring-up): this poll had no
++				 * timeout, so a GPU that never powered on hung
++				 * the CPU in the read and took the whole kernel
++				 * down with a hard lockup. Fail the resume
++				 * instead.
++				 */
++				dev_err(&gpu->pdev->dev,
++					"A430 GPU power-on timed out (RBBM_POWER_STATUS=%08x)\n",
++					reg);
++				return -ETIMEDOUT;
++			}
+ 		} while (!(reg & A4XX_RBBM_POWER_CNTL_IP_SP_TP_PWR_ON));
+ 	}
+ 	return 0;

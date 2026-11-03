@@ -1,0 +1,18 @@
+From: Matt
+Subject: [PATCH] drm/msm/a4xx: look up OCMEM on the GPU node (7.3 port of patches-612 0102)
+
+The "sram" phandle is on the GPU node, but a4xx passes the DRM device's
+parent (the display controller), so of_get_ocmem() never finds it and the
+A430 runs without GMEM. Pass the GPU platform device instead.
+---
+--- a/drivers/gpu/drm/msm/adreno/a4xx_gpu.c
++++ b/drivers/gpu/drm/msm/adreno/a4xx_gpu.c
+@@ -660,7 +660,7 @@
+ 							     a4xx_registers;
+ 
+ 	/* if needed, allocate gmem: */
+-	ret = adreno_gpu_ocmem_init(dev->dev, adreno_gpu,
++	ret = adreno_gpu_ocmem_init(&pdev->dev, adreno_gpu,
+ 				    &a4xx_gpu->ocmem);
+ 	if (ret)
+ 		goto fail;

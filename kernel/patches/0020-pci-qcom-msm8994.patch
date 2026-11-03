@@ -52,7 +52,7 @@ v2: DBI base 0 and a 16 MiB slave address space before the PHY, as CAF msm_pcie_
  static void qcom_pcie_deinit_1_0_0(struct qcom_pcie *pcie)
  {
  	struct qcom_pcie_resources_1_0_0 *res = &pcie->res.v1_0_0;
-@@ -673,6 +700,55 @@
+@@ -673,6 +700,56 @@
  	return ret;
  }
  
@@ -84,6 +84,12 @@ v2: DBI base 0 and a 16 MiB slave address space before the PHY, as CAF msm_pcie_
 +	/* the aux clock runs 5-7 ms after its enable (patch 0028) */
 +	usleep_range(10000, 11000);
 +
++	/* CAF msm_pcie_restore_sec_config (pci-msm.c:3283-3289): TZ set-up
++	 * BEFORE any PARF access, then PARF_PHY_CTRL bit 0 cleared */
++	if (!of_property_read_u32(pcie->pci->dev->of_node, "qcom,scm-dev-id", &val))
++		dev_info(pcie->pci->dev, "TZ restore_sec_cfg(%u): %d\n", val,
++			 qcom_scm_restore_sec_cfg(val, 0));
++
 +	/* PHY power on (CAF: PARF_PHY_CTRL bit 0 cleared before PHY init) */
 +	val = readl(pcie->parf + PARF_PHY_CTRL);
 +	val &= ~PHY_TEST_PWR_DOWN;
@@ -96,11 +102,6 @@ v2: DBI base 0 and a 16 MiB slave address space before the PHY, as CAF msm_pcie_
 +	 * offset 0, 16 MiB slave address space */
 +	writel(0, pcie->parf + PARF_DBI_BASE_ADDR);
 +	writel(SZ_16M, pcie->parf + PARF_SLV_ADDR_SPACE_SIZE);
-+
-+	/* CAF msm_pcie_restore_sec_config: TZ set-up for this controller */
-+	if (!of_property_read_u32(pcie->pci->dev->of_node, "qcom,scm-dev-id", &val))
-+		dev_info(pcie->pci->dev, "TZ restore_sec_cfg(%u): %d\n", val,
-+			 qcom_scm_restore_sec_cfg(val, 0));
 +
 +	return 0;
 +}

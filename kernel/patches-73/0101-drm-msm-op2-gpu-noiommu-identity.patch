@@ -1,0 +1,133 @@
+From: Matt
+Subject: [PATCH] drm/msm: OnePlus 2 GPU without IOMMU (physical addresses, identity_iova)
+
+TrustZone refuses the GPU SMMU secure set-up on the OnePlus 2, so the GPU
+node runs without iommus (DTS OP2_GPU_NOIOMMU) and msm_iommu_new() returns
+-ENODEV: the probe used to fail. Port the 6.12 VRAM-carveout behaviour
+(kernel/patches-612 0101/0104) to the mainline driver: with
+msm.identity_iova=1 the GEM layer already allocates physically contiguous
+CMA buffers (IOVA == physical address); here the address space becomes
+optional and the iova pin/unpin paths handle vm == NULL.
+---
+--- a/drivers/gpu/drm/msm/msm_gpu.c
++++ b/drivers/gpu/drm/msm/msm_gpu.c
+@@ -18,6 +18,7 @@
+ #include <linux/sched/task.h>
+ #include <linux/sched/mm.h>
+ #include <linux/utsname.h>
++#include <linux/iommu.h>
+ 
+ /*
+  * Power Management:
+@@ -385,7 +386,7 @@
+ 	if (fault_info)
+ 		state->fault_info = *fault_info;
+ 
+-	if (submit && state->fault_info.ttbr0) {
++	if (submit && submit->vm && state->fault_info.ttbr0) {
+ 		struct msm_gpu_fault_info *info = &state->fault_info;
+ 		struct msm_mmu *mmu = to_msm_vm(submit->vm)->mmu;
+ 
+@@ -395,7 +396,8 @@
+ 	}
+ 
+ 	if (submit) {
+-		crashstate_get_vm_logs(state, to_msm_vm(submit->vm));
++		if (submit->vm)
++			crashstate_get_vm_logs(state, to_msm_vm(submit->vm));
+ 		crashstate_get_bos(state, submit);
+ 	}
+ 
+@@ -880,7 +882,7 @@
+ 	}
+ 
+ 	if (IS_ERR_OR_NULL(vm) && kernel_managed)
+-		vm = drm_gpuvm_get(gpu->vm);
++		vm = gpu->vm ? drm_gpuvm_get(gpu->vm) : NULL;
+ 
+ 	return vm;
+ }
+@@ -972,8 +974,18 @@
+ 
+ 	gpu->vm = gpu->funcs->create_vm(gpu, pdev);
+ 	if (IS_ERR(gpu->vm)) {
+-		ret = PTR_ERR(gpu->vm);
+-		goto fail;
++		if (PTR_ERR(gpu->vm) == -ENODEV &&
++		    !device_iommu_mapped(&pdev->dev)) {
++			/* OnePlus 2: TZ refuses the GPU SMMU secure set-up, the
++			 * GPU runs without an address space on physical
++			 * addresses (msm.identity_iova=1, see msm_gem.c) */
++			DRM_DEV_INFO(drm->dev, "%s: no IOMMU, using physical addresses\n",
++				     name);
++			gpu->vm = NULL;
++		} else {
++			ret = PTR_ERR(gpu->vm);
++			goto fail;
++		}
+ 	}
+ 
+ 	memptrs = msm_gem_kernel_new(drm,
+--- a/drivers/gpu/drm/msm/msm_gem.c
++++ b/drivers/gpu/drm/msm/msm_gem.c
+@@ -569,6 +569,24 @@
+ 	if (to_msm_bo(obj)->flags & MSM_BO_NO_SHARE)
+ 		return -EINVAL;
+ 
++	if (!vm) {
++		/* OnePlus 2: no address space (no GPU IOMMU): the GPU runs on
++		 * physical addresses, IOVA == PA. No VMA without a VM */
++		struct page **pages;
++
++		if (!identity_iova)
++			return -EINVAL;
++		pages = get_pages(obj);
++		if (IS_ERR(pages))
++			return PTR_ERR(pages);
++		if (to_msm_bo(obj)->contig)
++			*iova = page_to_phys(to_msm_bo(obj)->contig);
++		else
++			*iova = page_to_phys(pages[0]);
++		pin_obj_locked(obj);
++		return 0;
++	}
++
+ 	if (identity_iova) {
+ 		struct page **pages = get_pages(obj);
+ 
+@@ -604,6 +622,17 @@
+ 	struct drm_exec exec;
+ 	int ret;
+ 
++	if (!vm) {
++		/* OnePlus 2: no GPU address space (no IOMMU), IOVA == PA */
++		ret = dma_resv_lock(obj->resv, NULL);
++		if (ret)
++			return ret;
++		ret = get_and_pin_iova_range_locked(obj, NULL, iova,
++						    range_start, range_end);
++		dma_resv_unlock(obj->resv);
++		return ret;
++	}
++
+ 	msm_gem_lock_vm_and_obj(&exec, obj, vm);
+ 	ret = get_and_pin_iova_range_locked(obj, vm, iova, range_start, range_end);
+ 	drm_exec_fini(&exec);     /* drop locks */
+@@ -707,6 +736,17 @@
+ 	struct drm_gpuva *vma;
+ 	struct drm_exec exec;
+ 
++	if (!vm) {
++		/* OnePlus 2: no address space, see get_and_pin_iova_range() */
++		if (!identity_iova)
++			return;
++		if (dma_resv_lock(obj->resv, NULL))
++			return;
++		msm_gem_unpin_locked(obj);
++		dma_resv_unlock(obj->resv);
++		return;
++	}
++
+ 	msm_gem_lock_vm_and_obj(&exec, obj, vm);
+ 	vma = lookup_vma(obj, vm);
+ 	if (vma) {

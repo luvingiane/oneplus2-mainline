@@ -1,0 +1,124 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * OnePlus 2 (DTS_DEFINES=OP2_CAMSS): CAMSS (camera) of msm8994, mainline 7.3
+ * style. Register map and IRQs from CAF msm8994-camera.dtsi; the CAMSS block
+ * is the 8x96 generation (see patch 0136: compatible qcom,msm8994-camss ->
+ * msm8996_resources).
+ *
+ * csiphy0-2: fda0ac00/b000/b400, csid0-3: fda08000/8400/8800/8c00,
+ * ispif: fda0a000, vfe0: fda10000, vfe1: fda14000, clk muxes fda00030/34/38.
+ */
+
+&soc {
+	camss: camss@fda00000 {
+		compatible = "qcom,msm8994-camss";
+		reg = <0xfda0ac00 0x200>,	/* csiphy0 */
+		      <0xfda00030 0x4>,		/* csiphy0_clk_mux */
+		      <0xfda0b000 0x200>,	/* csiphy1 */
+		      <0xfda00034 0x4>,		/* csiphy1_clk_mux */
+		      <0xfda0b400 0x200>,	/* csiphy2 */
+		      <0xfda00038 0x4>,		/* csiphy2_clk_mux */
+		      <0xfda08000 0x200>,	/* csid0 */
+		      <0xfda08400 0x200>,	/* csid1 */
+		      <0xfda08800 0x200>,	/* csid2 */
+		      <0xfda08c00 0x200>,	/* csid3 */
+		      <0xfda0a000 0x100>,	/* ispif */
+		      <0xfda00020 0x10>,		/* csi_clk_mux */
+		      <0xfda10000 0x1000>,	/* vfe0 */
+		      <0xfda14000 0x1000>;	/* vfe1 */
+		reg-names = "csiphy0", "csiphy0_clk_mux",
+			    "csiphy1", "csiphy1_clk_mux",
+			    "csiphy2", "csiphy2_clk_mux",
+			    "csid0", "csid1", "csid2", "csid3",
+			    "ispif", "csi_clk_mux", "vfe0", "vfe1";
+
+		interrupts = <GIC_SPI 78 IRQ_TYPE_EDGE_RISING>,	/* csiphy0 */
+			     <GIC_SPI 79 IRQ_TYPE_EDGE_RISING>,	/* csiphy1 */
+			     <GIC_SPI 80 IRQ_TYPE_EDGE_RISING>,	/* csiphy2 */
+			     <GIC_SPI 51 IRQ_TYPE_EDGE_RISING>,	/* csid0 */
+			     <GIC_SPI 52 IRQ_TYPE_EDGE_RISING>,	/* csid1 */
+			     <GIC_SPI 53 IRQ_TYPE_EDGE_RISING>,	/* csid2 */
+			     <GIC_SPI 54 IRQ_TYPE_EDGE_RISING>,	/* csid3 */
+			     <GIC_SPI 55 IRQ_TYPE_EDGE_RISING>,	/* ispif */
+			     <GIC_SPI 57 IRQ_TYPE_EDGE_RISING>,	/* vfe0 */
+			     <GIC_SPI 58 IRQ_TYPE_EDGE_RISING>;	/* vfe1 */
+		interrupt-names = "csiphy0", "csiphy1", "csiphy2",
+				  "csid0", "csid1", "csid2", "csid3",
+				  "ispif", "vfe0", "vfe1";
+
+		/* legacy magic index: VFE GDSC must come before the TOP one
+		 * (camss-vfe.c: dev_pm_domain_attach_by_id(dev, id)) */
+		power-domains = <&mmcc VFE_GDSC>,
+				<&mmcc CAMSS_TOP_GDSC>;
+
+		/* clock names as the 8x96 resources expect them
+		 * (camss-vfe.c: devm_clk_get(dev, "vfe0") etc., msm8996.dtsi
+		 * style). msm8994 mmcc has no per-VFE ahb/stream clocks:
+		 * vfeN_ahb and vfeN_stream alias the shared ones. */
+		clocks = <&mmcc CAMSS_TOP_AHB_CLK>,
+			 <&mmcc CAMSS_ISPIF_AHB_CLK>,
+			 <&mmcc CAMSS_PHY0_CSI0PHYTIMER_CLK>,
+			 <&mmcc CAMSS_PHY1_CSI1PHYTIMER_CLK>,
+			 <&mmcc CAMSS_PHY2_CSI2PHYTIMER_CLK>,
+			 <&mmcc CAMSS_CSI0_AHB_CLK>,
+			 <&mmcc CAMSS_CSI0_CLK>,
+			 <&mmcc CAMSS_CSI0PHY_CLK>,
+			 <&mmcc CAMSS_CSI0PIX_CLK>,
+			 <&mmcc CAMSS_CSI0RDI_CLK>,
+			 <&mmcc CAMSS_CSI1_AHB_CLK>,
+			 <&mmcc CAMSS_CSI1_CLK>,
+			 <&mmcc CAMSS_CSI1PHY_CLK>,
+			 <&mmcc CAMSS_CSI1PIX_CLK>,
+			 <&mmcc CAMSS_CSI1RDI_CLK>,
+			 <&mmcc CAMSS_CSI2_AHB_CLK>,
+			 <&mmcc CAMSS_CSI2_CLK>,
+			 <&mmcc CAMSS_CSI2PHY_CLK>,
+			 <&mmcc CAMSS_CSI2PIX_CLK>,
+			 <&mmcc CAMSS_CSI2RDI_CLK>,
+			 <&mmcc CAMSS_CSI3_AHB_CLK>,
+			 <&mmcc CAMSS_CSI3_CLK>,
+			 <&mmcc CAMSS_CSI3PHY_CLK>,
+			 <&mmcc CAMSS_CSI3PIX_CLK>,
+			 <&mmcc CAMSS_CSI3RDI_CLK>,
+			 <&mmcc CAMSS_AHB_CLK>,
+			 <&mmcc CAMSS_VFE_VFE0_CLK>,
+			 <&mmcc CAMSS_CSI_VFE0_CLK>,
+			 <&mmcc CAMSS_VFE_VFE_AHB_CLK>,
+			 <&mmcc CAMSS_VFE_VFE0_CLK>,
+			 <&mmcc CAMSS_VFE_VFE1_CLK>,
+			 <&mmcc CAMSS_CSI_VFE1_CLK>,
+			 <&mmcc CAMSS_VFE_VFE_AHB_CLK>,
+			 <&mmcc CAMSS_VFE_VFE1_CLK>,
+			 <&mmcc CAMSS_VFE_VFE_AHB_CLK>,
+			 <&mmcc CAMSS_VFE_VFE_AXI_CLK>;
+		clock-names = "top_ahb",
+			      "ispif_ahb",
+			      "csiphy0_timer",
+			      "csiphy1_timer",
+			      "csiphy2_timer",
+			      "csi0_ahb", "csi0", "csi0_phy",
+			      "csi0_pix", "csi0_rdi",
+			      "csi1_ahb", "csi1", "csi1_phy",
+			      "csi1_pix", "csi1_rdi",
+			      "csi2_ahb", "csi2", "csi2_phy",
+			      "csi2_pix", "csi2_rdi",
+			      "csi3_ahb", "csi3", "csi3_phy",
+			      "csi3_pix", "csi3_rdi",
+			      "ahb",
+			      "vfe0", "csi_vfe0", "vfe0_ahb", "vfe0_stream",
+			      "vfe1", "csi_vfe1", "vfe1_ahb", "vfe1_stream",
+			      "vfe_ahb", "vfe_axi";
+
+		vdda-supply = <&pm8994_l12>;
+		vddda-supply = <&pm8994_l22>;
+
+		ports {
+			#address-cells = <1>;
+			#size-cells = <0>;
+			port@0 { reg = <0>; /* csiphy0 -> csid0 */ };
+			port@1 { reg = <1>; };
+			port@2 { reg = <2>; };
+			port@3 { reg = <3>; };
+		};
+	};
+};

@@ -1,0 +1,12 @@
+--- a/drivers/gpu/drm/msm/msm_gpu.c
++++ b/drivers/gpu/drm/msm/msm_gpu.c
+@@ -128,6 +128,9 @@
+ 
+ static int disable_axi(struct msm_gpu *gpu)
+ {
++	/* keep ebi1 on: disabling the AXI clock bus-stalls any later GPU
++	 * register access -> hard lockup with NMI unresponsive (s114nr-A) */
++	return 0;
+ 	clk_disable_unprepare(gpu->ebi1_clk);
+ 	return 0;
+ }

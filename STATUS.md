@@ -5,6 +5,7 @@ Target: ztOS (Arch Linux ARM + mainline Linux + ztMETRO), as on the Galaxy S9.
 Strategy: mainline kernel, downstream 3.10 as reference only — see
 [docs/STRATEGY.md](docs/STRATEGY.md). Hardware map: [docs/HARDWARE.md](docs/HARDWARE.md).
 Backups and media recovery: [docs/BACKUP.md](docs/BACKUP.md).
+Latest milestone (hardware GPU rendering the UI on 7.3): [docs/MILESTONE-2026-11-03.md](docs/MILESTONE-2026-11-03.md).
 
 **Works**: tried on the phone, does what it should. **Partial**: some of it
 works; notes say what. **Blocked**: tried, stuck; notes say where.

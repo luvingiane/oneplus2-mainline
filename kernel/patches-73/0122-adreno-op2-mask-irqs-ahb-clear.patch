@@ -1,0 +1,26 @@
+--- a/drivers/gpu/drm/msm/adreno/a4xx_gpu.c
++++ b/drivers/gpu/drm/msm/adreno/a4xx_gpu.c
+@@ -364,6 +364,10 @@
+ 	gpu_write(gpu, REG_A4XX_CP_ME_CNTL, 0);
+ 	pr_info("op2dbg: hw_init ME_CNTL cleared\n");
+ 
++	/* mask all RBBM ints: AHB error irq path under test (s120 lockup) */
++	gpu_write(gpu, REG_A4XX_RBBM_INT_0_MASK, 0);
++	pr_info("op2dbg: hw_init INT_0_MASK=0 (irqs off)\n");
++
+ 	ret = a4xx_me_init(gpu) ? 0 : -EINVAL;
+ 	pr_info("op2dbg: a4xx_hw_init done ret=%d\n", ret);
+ 	return ret;
+@@ -428,9 +432,11 @@
+ 
+ 	status = gpu_read(gpu, REG_A4XX_RBBM_INT_0_STATUS);
+ 	pr_info("op2dbg: a4xx_irq status=%08x\n", status);
+-	if (status & A4XX_INT0_RBBM_AHB_ERROR)
++	if (status & A4XX_INT0_RBBM_AHB_ERROR) {
+ 		pr_info("op2dbg: a4xx_irq AHB_ERROR_STATUS=%08x\n",
+ 			gpu_read(gpu, REG_A4XX_RBBM_AHB_ERROR_STATUS));
++		gpu_write(gpu, REG_A4XX_RBBM_AHB_CMD, (1 << 4)); /* clear err */
++	}
+ 	DBG("%s: Int status %08x", gpu->name, status);
+ 
+ 	if (status & A4XX_INT0_CP_REG_PROTECT_FAULT) {

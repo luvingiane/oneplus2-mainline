@@ -12,6 +12,9 @@ import time
 HOST, PORT = "172.16.42.1", 23
 timeout = 30.0
 argv = sys.argv[1:]
+if argv[:1] == ["-H"]:
+    HOST = argv[1]
+    argv = argv[2:]
 if argv[:1] == ["-t"]:
     timeout = float(argv[1])
     argv = argv[2:]

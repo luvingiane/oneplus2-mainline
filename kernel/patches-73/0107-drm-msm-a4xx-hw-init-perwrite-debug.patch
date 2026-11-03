@@ -1,0 +1,125 @@
+--- a/drivers/gpu/drm/msm/adreno/a4xx_gpu.c
++++ b/drivers/gpu/drm/msm/adreno/a4xx_gpu.c
+@@ -185,6 +185,8 @@
+ 	return i;
+ }
+ 
++#define OP2W(r, v) do { pr_info("op2dbg: hw_init w %s=%08x\n", #r, (unsigned int)(v)); gpu_write(gpu, r, v); } while (0)
++
+ static int a4xx_hw_init(struct msm_gpu *gpu)
+ {
+ 	struct adreno_gpu *adreno_gpu = to_adreno_gpu(gpu);
+@@ -194,81 +196,81 @@
+ 
+ 	pr_info("op2dbg: a4xx_hw_init enter\n");
+ 	if (adreno_is_a405(adreno_gpu)) {
+-		gpu_write(gpu, REG_A4XX_VBIF_ROUND_ROBIN_QOS_ARB, 0x00000003);
++		OP2W(REG_A4XX_VBIF_ROUND_ROBIN_QOS_ARB, 0x00000003);
+ 	} else if (adreno_is_a420(adreno_gpu)) {
+-		gpu_write(gpu, REG_A4XX_VBIF_ABIT_SORT, 0x0001001F);
+-		gpu_write(gpu, REG_A4XX_VBIF_ABIT_SORT_CONF, 0x000000A4);
+-		gpu_write(gpu, REG_A4XX_VBIF_GATE_OFF_WRREQ_EN, 0x00000001);
+-		gpu_write(gpu, REG_A4XX_VBIF_IN_RD_LIM_CONF0, 0x18181818);
+-		gpu_write(gpu, REG_A4XX_VBIF_IN_RD_LIM_CONF1, 0x00000018);
+-		gpu_write(gpu, REG_A4XX_VBIF_IN_WR_LIM_CONF0, 0x18181818);
+-		gpu_write(gpu, REG_A4XX_VBIF_IN_WR_LIM_CONF1, 0x00000018);
+-		gpu_write(gpu, REG_A4XX_VBIF_ROUND_ROBIN_QOS_ARB, 0x00000003);
++		OP2W(REG_A4XX_VBIF_ABIT_SORT, 0x0001001F);
++		OP2W(REG_A4XX_VBIF_ABIT_SORT_CONF, 0x000000A4);
++		OP2W(REG_A4XX_VBIF_GATE_OFF_WRREQ_EN, 0x00000001);
++		OP2W(REG_A4XX_VBIF_IN_RD_LIM_CONF0, 0x18181818);
++		OP2W(REG_A4XX_VBIF_IN_RD_LIM_CONF1, 0x00000018);
++		OP2W(REG_A4XX_VBIF_IN_WR_LIM_CONF0, 0x18181818);
++		OP2W(REG_A4XX_VBIF_IN_WR_LIM_CONF1, 0x00000018);
++		OP2W(REG_A4XX_VBIF_ROUND_ROBIN_QOS_ARB, 0x00000003);
+ 	} else if (adreno_is_a430(adreno_gpu)) {
+-		gpu_write(gpu, REG_A4XX_VBIF_GATE_OFF_WRREQ_EN, 0x00000001);
+-		gpu_write(gpu, REG_A4XX_VBIF_IN_RD_LIM_CONF0, 0x18181818);
+-		gpu_write(gpu, REG_A4XX_VBIF_IN_RD_LIM_CONF1, 0x00000018);
+-		gpu_write(gpu, REG_A4XX_VBIF_IN_WR_LIM_CONF0, 0x18181818);
+-		gpu_write(gpu, REG_A4XX_VBIF_IN_WR_LIM_CONF1, 0x00000018);
+-		gpu_write(gpu, REG_A4XX_VBIF_ROUND_ROBIN_QOS_ARB, 0x00000003);
++		OP2W(REG_A4XX_VBIF_GATE_OFF_WRREQ_EN, 0x00000001);
++		OP2W(REG_A4XX_VBIF_IN_RD_LIM_CONF0, 0x18181818);
++		OP2W(REG_A4XX_VBIF_IN_RD_LIM_CONF1, 0x00000018);
++		OP2W(REG_A4XX_VBIF_IN_WR_LIM_CONF0, 0x18181818);
++		OP2W(REG_A4XX_VBIF_IN_WR_LIM_CONF1, 0x00000018);
++		OP2W(REG_A4XX_VBIF_ROUND_ROBIN_QOS_ARB, 0x00000003);
+ 	} else {
+ 		BUG();
+ 	}
+ 
+ 	/* Make all blocks contribute to the GPU BUSY perf counter */
+-	gpu_write(gpu, REG_A4XX_RBBM_GPU_BUSY_MASKED, 0xffffffff);
++	OP2W(REG_A4XX_RBBM_GPU_BUSY_MASKED, 0xffffffff);
+ 
+ 	/* Tune the hystersis counters for SP and CP idle detection */
+-	gpu_write(gpu, REG_A4XX_RBBM_SP_HYST_CNT, 0x10);
+-	gpu_write(gpu, REG_A4XX_RBBM_WAIT_IDLE_CLOCKS_CTL, 0x10);
++	OP2W(REG_A4XX_RBBM_SP_HYST_CNT, 0x10);
++	OP2W(REG_A4XX_RBBM_WAIT_IDLE_CLOCKS_CTL, 0x10);
+ 
+ 	if (adreno_is_a430(adreno_gpu)) {
+-		gpu_write(gpu, REG_A4XX_RBBM_WAIT_IDLE_CLOCKS_CTL2, 0x30);
++		OP2W(REG_A4XX_RBBM_WAIT_IDLE_CLOCKS_CTL2, 0x30);
+ 	}
+ 
+ 	 /* Enable the RBBM error reporting bits */
+-	gpu_write(gpu, REG_A4XX_RBBM_AHB_CTL0, 0x00000001);
++	OP2W(REG_A4XX_RBBM_AHB_CTL0, 0x00000001);
+ 
+ 	/* Enable AHB error reporting*/
+-	gpu_write(gpu, REG_A4XX_RBBM_AHB_CTL1, 0xa6ffffff);
++	OP2W(REG_A4XX_RBBM_AHB_CTL1, 0xa6ffffff);
+ 
+ 	/* Enable power counters*/
+-	gpu_write(gpu, REG_A4XX_RBBM_RBBM_CTL, 0x00000030);
++	OP2W(REG_A4XX_RBBM_RBBM_CTL, 0x00000030);
+ 
+ 	/*
+ 	 * Turn on hang detection - this spews a lot of useful information
+ 	 * into the RBBM registers on a hang:
+ 	 */
+-	gpu_write(gpu, REG_A4XX_RBBM_INTERFACE_HANG_INT_CTL,
++	OP2W(REG_A4XX_RBBM_INTERFACE_HANG_INT_CTL,
+ 			(1 << 30) | 0xFFFF);
+ 
+-	gpu_write(gpu, REG_A4XX_RB_GMEM_BASE_ADDR,
++	OP2W(REG_A4XX_RB_GMEM_BASE_ADDR,
+ 			(unsigned int)(a4xx_gpu->ocmem.base >> 14));
+ 
+ 	/* Turn on performance counters: */
+-	gpu_write(gpu, REG_A4XX_RBBM_PERFCTR_CTL, 0x01);
++	OP2W(REG_A4XX_RBBM_PERFCTR_CTL, 0x01);
+ 
+ 	/* use the first CP counter for timestamp queries.. userspace may set
+ 	 * this as well but it selects the same counter/countable:
+ 	 */
+-	gpu_write(gpu, REG_A4XX_CP_PERFCTR_CP_SEL_0, CP_ALWAYS_COUNT);
++	OP2W(REG_A4XX_CP_PERFCTR_CP_SEL_0, CP_ALWAYS_COUNT);
+ 
+ 	if (adreno_is_a430(adreno_gpu))
+-		gpu_write(gpu, REG_A4XX_UCHE_CACHE_WAYS_VFD, 0x07);
++		OP2W(REG_A4XX_UCHE_CACHE_WAYS_VFD, 0x07);
+ 
+ 	/* Disable L2 bypass to avoid UCHE out of bounds errors */
+-	gpu_write(gpu, REG_A4XX_UCHE_TRAP_BASE_LO, lower_32_bits(adreno_gpu->uche_trap_base));
+-	gpu_write(gpu, REG_A4XX_UCHE_TRAP_BASE_HI, upper_32_bits(adreno_gpu->uche_trap_base));
++	OP2W(REG_A4XX_UCHE_TRAP_BASE_LO, lower_32_bits(adreno_gpu->uche_trap_base));
++	OP2W(REG_A4XX_UCHE_TRAP_BASE_HI, upper_32_bits(adreno_gpu->uche_trap_base));
+ 
+-	gpu_write(gpu, REG_A4XX_CP_DEBUG, (1 << 25) |
++	OP2W(REG_A4XX_CP_DEBUG, (1 << 25) |
+ 			(adreno_is_a420(adreno_gpu) ? (1 << 29) : (1 << 14)));
+ 
+ 	/* On A430 enable SP regfile sleep for power savings */
+ 	/* TODO downstream does this for !420, so maybe applies for 405 too? */
+ 	if (!adreno_is_a420(adreno_gpu)) {
+-		gpu_write(gpu, REG_A4XX_RBBM_SP_REGFILE_SLEEP_CNTL_0,
++		OP2W(REG_A4XX_RBBM_SP_REGFILE_SLEEP_CNTL_0,
+ 			0x00000441);
+-		gpu_write(gpu, REG_A4XX_RBBM_SP_REGFILE_SLEEP_CNTL_1,
++		OP2W(REG_A4XX_RBBM_SP_REGFILE_SLEEP_CNTL_1,
+ 			0x00000441);
+ 	}
+ 

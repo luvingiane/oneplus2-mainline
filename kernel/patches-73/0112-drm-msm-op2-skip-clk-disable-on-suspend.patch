@@ -1,0 +1,15 @@
+--- a/drivers/gpu/drm/msm/msm_gpu.c
++++ b/drivers/gpu/drm/msm/msm_gpu.c
+@@ -91,7 +91,11 @@
+ 
+ static int disable_clk(struct msm_gpu *gpu)
+ {
+-	pr_info("op2dbg: disable_clk enter\n");
++	pr_info("op2dbg: disable_clk enter (skip bulk: RPM SMD clocks hard-lockup on disable, s110nr-B)\n");
++	/* Keep clocks on: clk_bulk_disable_unprepare stalls on the RPM SMD
++	 * clocks (gfx3d_rpm/ocmemgx/mmssnoc_ahb) -> hard lockup (s110nr-B,
++	 * lockup inside disable_clk during pm_suspend). */
++	return 0;
+ 	clk_bulk_disable_unprepare(gpu->nr_clocks, gpu->grp_clks);
+ 	pr_info("op2dbg: disable_clk bulk done\n");
+ 

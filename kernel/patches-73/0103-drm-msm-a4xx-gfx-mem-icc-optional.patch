@@ -1,0 +1,32 @@
+From: Matt
+Subject: [PATCH] drm/msm/a4xx: make the gfx-mem interconnect optional (OnePlus 2)
+
+The 7.3 tree has no msm8994 interconnect providers (the NoC is RPM-owned),
+so devm_of_icc_get("gfx-mem") fails with -ENOENT and the probe dies. The
+ocmem path is already optional; make gfx-mem optional too for bring-up.
+icc_set_bw() already tolerates a NULL path.
+---
+--- a/drivers/gpu/drm/msm/adreno/a4xx_gpu.c
++++ b/drivers/gpu/drm/msm/adreno/a4xx_gpu.c
+@@ -660,7 +660,7 @@
+ 							     a4xx_registers;
+ 
+ 	/* if needed, allocate gmem: */
+-	ret = adreno_gpu_ocmem_init(dev->dev, adreno_gpu,
++	ret = adreno_gpu_ocmem_init(&pdev->dev, adreno_gpu,
+ 				    &a4xx_gpu->ocmem);
+ 	if (ret)
+ 		goto fail;
+@@ -670,7 +670,11 @@
+ 	icc_path = devm_of_icc_get(&pdev->dev, "gfx-mem");
+ 	if (IS_ERR(icc_path)) {
+ 		ret = PTR_ERR(icc_path);
+-		goto fail;
++		/* OnePlus 2: the 7.3 tree has no msm8994 interconnect providers
++		 * (RPM-owned NoC); bring-up without icc, like ocmem below */
++		if (ret != -ENOENT && ret != -ENODATA)
++			goto fail;
++		icc_path = NULL;
+ 	}
+ 
+ 	ocmem_icc_path = devm_of_icc_get(&pdev->dev, "ocmem");

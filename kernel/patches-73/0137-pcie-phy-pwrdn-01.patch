@@ -1,0 +1,24 @@
+--- a/drivers/phy/qualcomm/phy-qcom-pcie-msm8994.c
++++ b/drivers/phy/qualcomm/phy-qcom-pcie-msm8994.c
+@@ -140,6 +140,12 @@
+ 		writel(msm8994_pcie_phy_tbl[i].val,
+ 		       qphy->base + msm8994_pcie_phy_tbl[i].reg);
+ 
++	/* op2 0137: power-up after the init table (CAF pcie_phy_init writes
++	 * PWRDN=0x01 then START=0x03 at the end): without this the PHY stays
++	 * in PWRDN=0x3 and the PLL never locks. */
++	writel(0x01, qphy->base + PCIE_PHY_POWER_DOWN_CONTROL);
++	writel(0x03, qphy->base + PCIE_PHY_START);
++
+ 	/*
+ 	 * CAF: PHY stabilisation, then the pipe clock at 125 MHz (that
+ 	 * selects the PHY's own pipe output in GCC, patch 0021), then wait
+@@ -161,7 +167,7 @@
+ 		return ret;
+ 
+ 	ret = readl_poll_timeout(qphy->base + PCIE_PHY_PCS_STATUS, val,
+-				 !(val & PCS_PHYSTATUS), 1000, 1000000);
++				 !(val & PCS_PHYSTATUS), 10000, 10000000);
+ 	if (ret) {
+ 		/* bring-up: what state the PLL / reset machine reached */
+ 		dev_err(qphy->dev,

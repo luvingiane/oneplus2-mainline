@@ -1,0 +1,45 @@
+From: Matt
+Subject: [PATCH] drm/msm: op2 GPU submit BOs and GET_INFO iova at IOVA == PA (identity range in get_vma)
+
+With the nop-MMU GPU VM of 0130 the submit path and MSM_INFO_GET_IOVA still
+allocated arbitrary IOVAs; the GPU has no translation, so use the same
+physical range as get_and_pin_iova_range_locked() when msm.identity_iova=1
+(msm_gem_get_vma_locked, also used by msm_gem_get_iova).
+---
+--- a/drivers/gpu/drm/msm/msm_gem.c
++++ b/drivers/gpu/drm/msm/msm_gem.c
+@@ -554,7 +554,22 @@
+ struct drm_gpuva *msm_gem_get_vma_locked(struct drm_gem_object *obj,
+ 					 struct drm_gpuvm *vm)
+ {
+-	return get_vma_locked(obj, vm, 0, U64_MAX);
++	u64 range_start = 0, range_end = U64_MAX;
++
++	/* op2 0144: submit BOs must sit at IOVA == PA too (GPU has no SMMU
++	 * translation), same range as get_and_pin_iova_range_locked() */
++	if (identity_iova) {
++		struct page **pages = get_pages(obj);
++
++		if (IS_ERR(pages))
++			return ERR_CAST(pages);
++		if (to_msm_bo(obj)->contig) {
++			range_start = page_to_phys(to_msm_bo(obj)->contig);
++			range_end = range_start + obj->size;
++		}
++	}
++
++	return get_vma_locked(obj, vm, range_start, range_end);
+ }
+ 
+ static int get_and_pin_iova_range_locked(struct drm_gem_object *obj,
+@@ -659,7 +674,9 @@
+ 	int ret = 0;
+ 
+ 	msm_gem_lock_vm_and_obj(&exec, obj, vm);
+-	vma = get_vma_locked(obj, vm, 0, U64_MAX);
++	/* op2 0144: GET_INFO(iova) hands this address to userspace, which puts
++	 * it in the command stream: it has to be the physical one too */
++	vma = msm_gem_get_vma_locked(obj, vm);
+ 	if (IS_ERR(vma)) {
+ 		ret = PTR_ERR(vma);
+ 	} else {

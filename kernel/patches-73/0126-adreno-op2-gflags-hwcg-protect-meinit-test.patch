@@ -1,0 +1,64 @@
+--- a/drivers/gpu/drm/msm/adreno/a4xx_gpu.c
++++ b/drivers/gpu/drm/msm/adreno/a4xx_gpu.c
+@@ -21,6 +21,26 @@
+ extern bool hang_debug;
+ static void a4xx_dump(struct msm_gpu *gpu);
+ static bool a4xx_idle(struct msm_gpu *gpu);
++
++/* op2 test flags: op2.gflags=0x1 no hwcg, 0x2 no protect, 0x4 no me_init */
++static unsigned int op2_gflags;
++static int __init op2_gflags_setup(char *str)
++{
++	op2_gflags = (unsigned int)simple_strtoul(str, NULL, 0);
++	pr_info("op2dbg: gflags=%08x\n", op2_gflags);
++	return 1;
++}
++__setup("op2.gflags=", op2_gflags_setup);
++#define OP2_GF_NOHWCG	0x1
++#define OP2_GF_NOPROTECT	0x2
++#define OP2_GF_NOMEINIT	0x4
++
++/* write + read-back: a read forces the posted write to complete, so a
++ * poison register wedges exactly at the print that follows it */
++#define OP2WR(r, v) do { pr_info("op2dbg: hw_init WR %s=%08x\n", #r, (unsigned int)(v)); gpu_write(gpu, r, v); pr_info("op2dbg: hw_init RB %s=%08x\n", #r, gpu_read(gpu, r)); } while (0)
+@@ a4xx_hw_init: vbif+rbbm done
+ 	pr_info("op2dbg: hw_init vbif+rbbm writes done\n");
+-	a4xx_enable_hwcg(gpu);
++	if (!(op2_gflags & OP2_GF_NOHWCG))
++		a4xx_enable_hwcg(gpu);
++	else
++		pr_info("op2dbg: hwcg SKIPPED (gflags)\n");
+ 	pr_info("op2dbg: hw_init hwcg done\n");
+@@ a4xx_hw_init: protect section
+-	/* setup access protection: */
+-	gpu_write(gpu, REG_A4XX_CP_PROTECT_CTRL, 0x00000007);
+-	... (all CP_PROTECT writes converted to OP2WR with read-back)
+-	gpu_write(gpu, REG_A4XX_RBBM_INT_0_MASK, A4XX_INT0_MASK);
++	if (op2_gflags & OP2_GF_NOPROTECT) {
++		pr_info("op2dbg: hw_init protect SKIPPED (gflags)\n");
++	} else {
++		OP2WR(...) x12 (PROTECT_CTRL + PROTECT(0..11))
++	}
++	OP2WR(REG_A4XX_RBBM_INT_0_MASK, A4XX_INT0_MASK);
+ 	pr_info("op2dbg: hw_init protect done\n");
+@@ a4xx_hw_init: me_init
+-	pr_info("op2dbg: hw_init SKIP me_init (s124 test)\n");
+-	ret = 0;
+-	if (0) ret = a4xx_me_init(gpu) ? 0 : -EINVAL;
++	if (op2_gflags & OP2_GF_NOMEINIT) {
++		pr_info("op2dbg: hw_init SKIP me_init (gflags)\n");
++		ret = 0;
++	} else {
++		ret = a4xx_me_init(gpu) ? 0 : -EINVAL;
++	}
+--- a/drivers/gpu/drm/msm/adreno/adreno_gpu.c
++++ b/drivers/gpu/drm/msm/adreno/adreno_gpu.c
+@@ adreno_hw_init
+ 	VERB("%s", gpu->name);
++	pr_info("op2dbg: adreno_hw_init enter nr_rings=%d\n", gpu->nr_rings);
+@@ ring loop
+ 		}
++		pr_info("op2dbg: adreno_hw_init ring%d memptrs done\n", i);
+ 	}
++	pr_info("op2dbg: adreno_hw_init exit\n");
+ 	return 0;

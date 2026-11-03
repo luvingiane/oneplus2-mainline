@@ -1,0 +1,17 @@
+--- a/drivers/gpu/drm/msm/adreno/a4xx_gpu.c
++++ b/drivers/gpu/drm/msm/adreno/a4xx_gpu.c
+@@ -244,8 +244,13 @@
+ 	OP2W(REG_A4XX_RBBM_INTERFACE_HANG_INT_CTL,
+ 			(1 << 30) | 0xFFFF);
+ 
++	/* ocmem.c device_address() returns phys_to_offset(offset=0) == 0 on
++	 * msm8994, so ocmem.base is 0 and GMEM would be programmed at phys 0
++	 * (a hole -> GPU AHB error -> NoC wedge -> hard lockup, s117nr-B).
++	 * Use the OCMEM bus base 0xfec00000 (mem region start) instead. */
+ 	OP2W(REG_A4XX_RB_GMEM_BASE_ADDR,
+-			(unsigned int)(a4xx_gpu->ocmem.base >> 14));
++			(unsigned int)((a4xx_gpu->ocmem.base ? a4xx_gpu->ocmem.base
++					: 0xfec00000UL) >> 14));
+ 
+ 	/* Turn on performance counters: */
+ 	OP2W(REG_A4XX_RBBM_PERFCTR_CTL, 0x01);

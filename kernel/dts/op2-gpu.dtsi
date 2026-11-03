@@ -16,12 +16,15 @@
  * pmi8994_s2_corner, initial corner SVS). Writes through SPMI are undone by
  * RPM (VSET read back 0x84/0x85 = 0.74 V). Hang the MMCC GDSCs below the
  * rpmpd VDDGFX domain and ask for the nominal corner, so turning the GX
- * GDSC on raises the rail.
+ * GDSC on raises the rail. OP2_GPU_NORPMPD disables it (7.3 bring-up test:
+ * the mainline mmcc may hang/crash powering the GX GDSC without the rail).
  */
+#ifndef OP2_GPU_NORPMPD
 &mmcc {
 	power-domains = <&rpmpd MSM8994_VDDGFX>;
 	required-opps = <&rpmpd_opp_turbo>;
 };
+#endif
 
 &soc {
 /*
@@ -125,6 +128,14 @@
 #endif
 		power-domains = <&mmcc OXILI_GX_GDSC>;
 		/*
+		 * Pre-set the RPM-owned gfx3d source to 600 MHz at boot: the
+		 * core clock's parent is RPM_SMD_GFX3D_CLK_SRC (rate reads back
+		 * INT_MAX until it is configured) and the runtime devfreq
+		 * opp_set_rate -> clk_set_rate on this parent hard-lockups cpu0
+		 * (s107nr-A, lockup ~114s after "Couldn't update frequency
+		 * transition"). Rail S2B is at 1035 mV, safe for 600 MHz (NOM).
+		 */
+		/*
 		 * Both banks: the OnePlus DT gives bank 0 SIDs <0 1>, but with bank 0
 		 * only the first draw resets the phone (s36-s38) where banks 0 and 1
 		 * merely hang it (19:25 test): TZ's stream mapping still uses bank 1.
@@ -140,10 +151,23 @@
 		gpu_opp_table: opp-table {
 			compatible = "operating-points-v2";
 
-			/* the bootloader's gfx3d rate is kept for now (no RCG in mainline mmcc) */
-			opp-180000000 {
-				opp-hz = /bits/ 64 <180000000>;
-			};
+			/*
+			 * CAF gpu-pwrlevels (research/lineage-kernel msm8994-gpu.dtsi):
+			 * 600/400/300/150/27 MHz. gfx3d is an RPM SMD clock (no RCG for
+			 * it in the mainline mmcc), so rates go through the RPM.
+			 *
+			 * required-opps raise the VDDGFX rail (rpmpd gfx_s2b_corner,
+			 * pmi8994 S2B driven by the RPM) BEFORE the clock rate is set
+			 * (the OPP core applies required-opps before clk_set_rate when
+			 * scaling up). Without this the GPU ran 600 MHz with the rail
+			 * left at the boot corner and the first register access hung
+			 * the bus (hard lockup, s102 test 2026-10-29).
+			 */
+			opp-600000000 { opp-hz = /bits/ 64 <600000000>; required-opps = <&rpmpd_opp_turbo>; };
+			opp-400000000 { opp-hz = /bits/ 64 <400000000>; required-opps = <&rpmpd_opp_turbo>; };
+			opp-300000000 { opp-hz = /bits/ 64 <300000000>; required-opps = <&rpmpd_opp_nom>; };
+			opp-150000000 { opp-hz = /bits/ 64 <150000000>; required-opps = <&rpmpd_opp_nom>; };
+			opp-27000000 { opp-hz = /bits/ 64 <27000000>; required-opps = <&rpmpd_opp_svs_soc>; };
 		};
 	};
 };

@@ -1,0 +1,22 @@
+From: Matt
+Subject: [PATCH] phy: qcom-pcie-msm8994: log PLL lock comparator + debug bus on PHY not ready
+
+Bring-up debug for the Wi-Fi PLL that never locks: dump the PLL lock
+comparator, CRC control, revision id, debug bus status and the actual
+ref clock rate when the PCS_STATUS poll times out.
+
+--- a/drivers/phy/qualcomm/phy-qcom-pcie-msm8994.c
++++ b/drivers/phy/qualcomm/phy-qcom-pcie-msm8994.c
+@@ -190,6 +190,17 @@
+ 			readl(qphy->base + 0x048), readl(qphy->base + 0x0ac),
+ 			readl(qphy->base + 0x014), readl(qphy->base + 0x400),
+ 			readl(qphy->base + 0x4ac), readl(qphy->base + 0x650));
++		dev_err(qphy->dev,
++			"pll debug: PLLLOCK_CMP1 %#x PLLLOCK_CMP2 %#x PLLLOCK_CMP_EN %#x CRCTRL %#x REVID0 %#x DBG_BUS0 %#x DBG_BUS1 %#x ref_clk_rate %lu\n",
++			readl(qphy->base + 0x090), readl(qphy->base + 0x094),
++			readl(qphy->base + 0x09c), readl(qphy->base + 0x114),
++			readl(qphy->base + 0x730), readl(qphy->base + 0x740),
++			readl(qphy->base + 0x744), clk_get_rate(qphy->ref_clk));
+ 		clk_disable_unprepare(qphy->pipe_clk);
+ 		return ret;
+ 	}

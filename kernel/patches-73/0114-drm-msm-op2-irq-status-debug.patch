@@ -1,0 +1,21 @@
+--- a/drivers/gpu/drm/msm/adreno/a4xx_gpu.c
++++ b/drivers/gpu/drm/msm/adreno/a4xx_gpu.c
+@@ -422,6 +422,7 @@
+ 	uint32_t status;
+ 
+ 	status = gpu_read(gpu, REG_A4XX_RBBM_INT_0_STATUS);
++	pr_info("op2dbg: a4xx_irq status=%08x\n", status);
+ 	DBG("%s: Int status %08x", gpu->name, status);
+ 
+ 	if (status & A4XX_INT0_CP_REG_PROTECT_FAULT) {
+@@ -434,9 +435,9 @@
+ 	gpu_write(gpu, REG_A4XX_RBBM_INT_CLEAR_CMD, status);
+ 
+ 	msm_gpu_retire(gpu);
++	pr_info("op2dbg: a4xx_irq done\n");
+ 
+ 	return IRQ_HANDLED;
+-	pr_info("op2dbg: a4xx_irq done\n");
+ }
+ 
+ static const unsigned int a4xx_registers[] = {

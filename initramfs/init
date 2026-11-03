@@ -95,13 +95,10 @@ if [ "$(arg op2.kick)" != 0 ]; then
 fi
 
 # --- USB gadget: NCM + ACM ---------------------------------------------------
-# Per-phone network, so both phones can be on the computer at once:
-# B (target) 172.16.42.x, A (broken screen, helper agents) 172.16.44.x.
-SERIAL=$(arg androidboot.serialno)
-case "$SERIAL" in
-<phone-A>) NET=44; MACID=0a ;;
-*)        NET=42; MACID=0b ;;
-esac
+# Per-phone network, so two phones can be on the computer at once: the second
+# one is booted with op2.net=44 on its cmdline (default: 172.16.42.x).
+NET=$(arg op2.net); NET=${NET:-42}
+if [ "$NET" = 42 ]; then MACID=0b; else MACID=0a; fi
 PHONE_IP=172.16.$NET.1; HOST_IP=172.16.$NET.2
 
 usb_up() {

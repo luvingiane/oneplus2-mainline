@@ -308,9 +308,9 @@ watchdog finding (unproven, done with the oversized kernel).
 ```
 14:05:45 usb 1-3: New USB device found, idVendor=18d1, idProduct=d001
 14:05:45 usb 1-3: Product: OnePlus 2 op2boot
-14:05:45 cdc_ncm 1-3:1.0 usb0: register 'cdc_ncm' ... CDC NCM, <mac>
+14:05:45 cdc_ncm 1-3:1.0 usb0: register 'cdc_ncm' ... CDC NCM, <gadget-mac>
 ```
-NetworkManager profile `op2-usb` (host MAC <mac>, <usb-net-B>.2/24,
+NetworkManager profile `op2-usb` (host MAC <gadget-mac>, <usb-net-B>.2/24,
 never default) brings the link up by itself. Phone shell (`scripts/psh.py`):
 ```
 Linux (none) 7.3.0-oneplus2 #5 SMP PREEMPT ... aarch64
@@ -728,7 +728,7 @@ CTL/LM/PP setup and compare.
   the middle of probing, i.e. a reset early in boot. Parked (OP2_USBPHY off).
 - initramfs: network by serial — A (<phone-A>) <usb-net-A>.1, MAC
   02:00:00:0a:02:xx; B <usb-net-B>.1 as before. Host profile op2a-usb
-  (MAC <mac>, <usb-net-A>.2) added with nmcli. ssh host `op2a`.
+  (MAC <gadget-mac>, <usb-net-A>.2) added with nmcli. ssh host `op2a`.
 - helper agents: tools a_state / a_boot (only out/op2a-*.img, RAM) /
   a_shell (eMMC writes refused) / a_to_fastboot for tasks marked
   "telefono: A". Runner now nudges a model that writes a tool call as text

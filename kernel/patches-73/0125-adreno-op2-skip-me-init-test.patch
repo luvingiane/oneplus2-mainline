@@ -1,0 +1,15 @@
+--- a/drivers/gpu/drm/msm/adreno/a4xx_gpu.c
++++ b/drivers/gpu/drm/msm/adreno/a4xx_gpu.c
+@@ -371,7 +371,11 @@
+ 	gpu_write(gpu, REG_A4XX_RBBM_INT_0_MASK, 0);
+ 	pr_info("op2dbg: hw_init INT_0_MASK=0 (irqs off)\n");
+ 
+-	ret = a4xx_me_init(gpu) ? 0 : -EINVAL;
++	/* TEST s124: skip ME init entirely — if the post-hw_init bus wedge
++	 * disappears, the CP/ME executing the ME_INIT packet is the trigger */
++	pr_info("op2dbg: hw_init SKIP me_init (s124 test)\n");
++	ret = 0;
++	if (0) ret = a4xx_me_init(gpu) ? 0 : -EINVAL;
+ 	pr_info("op2dbg: a4xx_hw_init done ret=%d\n", ret);
+ 	return ret;
+ }

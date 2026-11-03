@@ -1,0 +1,182 @@
+From: Matt
+Subject: [PATCH] drm/msm/dsi: 20nm PHY: runtime PLL relock via debugfs (op2.dsipll)
+
+Adds /sys/kernel/debug/dsipll: write a dec_start value to re-lock the
+bootloader DSI PLL at VCO = 19.2MHz*2*dec_start (dec_start=23 -> 883.2 MHz
+-> 883 Mbps/lane). Read shows current dec_start and lock. Runtime-only:
+the boot path is untouched (the boot-time relock hung the link), so this
+is safe to enable. Use it to find the highest stable rate for 60 fps.
+
+--- a/drivers/gpu/drm/msm/dsi/phy/dsi_phy_20nm.c
++++ b/drivers/gpu/drm/msm/dsi/phy/dsi_phy_20nm.c
+@@ -7,6 +7,9 @@
+ #include "dsi.xml.h"
+ #include "dsi_phy_20nm.xml.h"
+ 
++static struct msm_dsi_phy *op2_phy;
++static void op2_dsipll_init(struct msm_dsi_phy *phy);
++
+ static void dsi_20nm_dphy_set_timing(struct msm_dsi_phy *phy,
+ 		struct msm_dsi_dphy_timing *timing)
+ {
+@@ -81,6 +84,19 @@ static int dsi_20nm_phy_enable(struct msm_dsi_phy *phy,
+ 		return -EINVAL;
+ 	}
+ 
++	/*
++	 * Keep the bootloader's PHY registers. The host still programs the
++	 * clock lane pre/post times (CLKOUT_TIMING_CTRL) from this timing: use
++	 * the bootloader's/panel's values (0x3e/0x20 on the OnePlus 2), not the
++	 * computed ones, so they match the PHY setup that is kept.
++	 */
++	if (phy->bootloader_kept) {
++		timing->shared_timings.clk_pre = 0x3e;
++		timing->shared_timings.clk_post = 0x20;
++		timing->shared_timings.clk_pre_inc_by_2 = false;
++		return 0;
++	}
++
+ 	dsi_20nm_phy_regulator_ctrl(phy, true);
+ 
+ 	writel(0xff, base + REG_DSI_20nm_PHY_STRENGTH_0);
+@@ -124,10 +140,29 @@ static int dsi_20nm_phy_enable(struct msm_dsi_phy *phy,
+ 
+ static void dsi_20nm_phy_disable(struct msm_dsi_phy *phy)
+ {
++	if (phy->bootloader_kept)
++		return;
+ 	writel(0, phy->base + REG_DSI_20nm_PHY_CTRL_0);
+ 	dsi_20nm_phy_regulator_ctrl(phy, false);
+ }
+ 
++/*
++ * There is no 20nm DSI PLL driver: the PLL is the bootloader's, powered
++ * through this PHY's regulator. If the bootloader left the PHY enabled
++ * (CTRL_0 = 0x7f), keep PHY and PLL exactly as they are.
++ */
++static int dsi_20nm_phy_check_bootloader(struct msm_dsi_phy *phy)
++{
++	op2_phy = phy;
++	op2_dsipll_init(phy);
++	if (readl(phy->base + REG_DSI_20nm_PHY_CTRL_0) == 0x7f) {
++		phy->bootloader_kept = true;
++		DRM_DEV_INFO(&phy->pdev->dev,
++			     "keeping the bootloader's PHY and PLL setup\n");
++	}
++	return 0;
++}
++
+ static const struct regulator_bulk_data dsi_phy_20nm_regulators[] = {
+ 	{ .supply = "vddio", .init_load_uA = 100000 },	/* 1.8 V */
+ 	{ .supply = "vcca", .init_load_uA = 10000 },	/* 1.0 V */
+@@ -140,8 +175,110 @@ const struct msm_dsi_phy_cfg dsi_phy_20nm_cfgs = {
+ 	.ops = {
+ 		.enable = dsi_20nm_phy_enable,
+ 		.disable = dsi_20nm_phy_disable,
++		.parse_dt_properties = dsi_20nm_phy_check_bootloader,
+ 	},
+ 	.io_start = { 0xfd998500, 0xfd9a0500 },
+ 	.num_dsi_phy = 2,
+ };
+ 
++
++/* ---- op2: runtime DSI PLL relock (debugfs /sys/kernel/debug/dsipll) ----
++ * Write a dec_start value (VCO = 19.2MHz * 2 * dec_start). dec_start=23 ->
++ * 883.2 MHz -> 883 Mbps/lane. Read returns current dec_start and lock.
++ * Safe at runtime: no boot-time touching of the PLL. */
++#include <linux/debugfs.h>
++#include <linux/uaccess.h>
++
++static void op2_pll_relock(struct msm_dsi_phy *phy, u32 dec_start)
++{
++	void __iomem *pll = phy->pll_base;
++	u64 mult = (u64)dec_start << 20;
++	u32 comp;
++	u32 v;
++	int i;
++
++	if (!pll)
++		return;
++	comp = (u32)(div64_u64(mult * 2 * 1024, 10ULL << 20) - 1);
++	/*
++	 * Full CAF sequence (mdss-dsi-pll-20nm): the old code forced the
++	 * bootloader KVCO_CODE/VCO_TUNE trim and bypassed the calibration
++	 * (RESETSM_CNTRL=0xac) -> PLL never re-locked (lock=0 at any dec_start,
++	 * live test 2/11). CAF clears the trim and lets the reset state machine
++	 * calibrate (RESETSM_CNTRL=0x24, CNTRL2=0x07).
++	 */
++	writel(0x82, pll + 0x04);			/* VCOTAIL_EN */
++	writel(0x2a, pll + 0x30);			/* BIAS_EN_CLKBUFLR_EN */
++	writel(0x2b, pll + 0x30);
++	writel(0x02, pll + 0x54);			/* RESETSM_CNTRL3 low */
++	writel(0x40, pll + 0x00);			/* SYS_CLK_CTRL */
++	writel(0x0f, pll + 0x0c);			/* IE_TRIM */
++	writel(0x0f, pll + 0x10);			/* IP_TRIM */
++	writel(0x08, pll + 0x18);			/* PHSEL_CONTROL */
++	writel(0x0e, pll + 0x1c);			/* IPTAT_TRIM_VCCA_TX_SEL */
++	writel(0x08, pll + 0x2c);			/* BKG_KVCO_CAL_EN */
++	writel(0x4a, pll + 0x48);			/* SYSCLK_EN_SEL_TXBAND */
++	writel(0x00, pll + 0x60);			/* DIV_REF1 */
++	writel(0x01, pll + 0x64);			/* DIV_REF2 */
++	writel(0x07, pll + 0x14);			/* PLL_CNTRL */
++	writel(0x1f, pll + 0x70);			/* KVCO_CAL_CNTRL */
++	writel(0x8a, pll + 0x68);			/* KVCO_COUNT1 */
++	writel(0x10, pll + 0x80);			/* VREF_CFG3 */
++	writel(0x00, pll + 0xb4);			/* SSC_EN_CENTER */
++	writel(0x0c, pll + 0xfc);			/* FAUX_EN */
++	writel(0x0a, pll + 0x110);			/* PLL_RXTXEPCLK_EN */
++	writel(0x0f, pll + 0x13c);			/* LOW_POWER_RO_CONTROL */
++	writel(0x00, pll + 0x08);			/* CMN_MODE */
++	writel(0x03, pll + 0x24);			/* IP_SETI */
++	writel(0x3f, pll + 0x34);			/* PLL_CP_SETI */
++	writel(0x03, pll + 0x38);			/* PLL_IP_SETP */
++	writel(0x1f, pll + 0x3c);			/* PLL_CP_SETP */
++	writel(0x77, pll + 0x114);			/* PLL_CRCTRL */
++	writel(0x90, pll + 0x140);			/* POST_DIVIDER_CONTROL */
++	writel(comp & 0xff, pll + 0x90);		/* PLLLOCK_CMP1 */
++	writel((comp >> 8) & 0xff, pll + 0x94);	/* CMP2 */
++	writel((comp >> 16) & 0xff, pll + 0x98);	/* CMP3 */
++	writel((dec_start & 0x7f) | BIT(7), pll + 0xAC);	/* DEC_START1 */
++	writel(((dec_start & 0x80) >> 7) | BIT(1), pll + 0x10C); /* DEC_START2 */
++	writel(0x80, pll + 0x100);			/* DIV_FRAC_START1 (0) */
++	writel(0x80, pll + 0x104);			/* 2 */
++	writel(0x40, pll + 0x108);			/* 3 */
++	writel(0x00, pll + 0x74);			/* KVCO_CODE: cal decides */
++	writel(0x00, pll + 0xa8);			/* VCO_TUNE: cal decides */
++	writel(0x24, pll + 0x4c);			/* RESETSM_CNTRL: cal on */
++	writel(0x07, pll + 0x50);			/* RESETSM_CNTRL2 */
++	writel(0x03, pll + 0x04);			/* VCOTAIL_EN */
++	writel(0x02, pll + 0x54);			/* RESETSM_CNTRL3 low */
++	udelay(10);
++	writel(0x03, pll + 0x54);			/* high: vco start */
++	wmb();
++	for (i = 0; i < 100000; i++) {
++		v = readl(pll + 0x150);			/* RESET_SM */
++		if (v & BIT(5))
++			break;
++		udelay(1);
++	}
++	DRM_DEV_INFO(&phy->pdev->dev,
++		     "dsipll: dec_start=%u VCO=%lluMHz RESET_SM=0x%x %s\n",
++		     dec_start, (u64)19200000 * 2 * dec_start / 1000000, v,
++		     (v & BIT(5)) ? "LOCKED" : "no-lock");
++}
++
++static int op2_dsipll_show(struct seq_file *s, void *unused)
++{
++	struct msm_dsi_phy *phy = op2_phy;
++	u32 d1, d2, v;
++	if (!phy || !phy->pll_base)
++		return 0;
++	d1 = readl(phy->pll_base + 0xAC) & 0x7f;
++	d2 = (readl(phy->pll_base + 0x10C) & BIT(0)) << 7;
++	v = readl(phy->pll_base + 0x150);
++	seq_printf(s, "dec_start=%u vco=%lluMHz lock=%d\n", d1 | d2,
++		   (u64)19200000 * 2 * (d1 | d2) / 1000000, !!(v & BIT(5)));
++	return 0;
++}
++
++static ssize_t op2_dsipll_write(struct file *f, const char __user *ubuf,
++				size_t len, loff_t *off)
++{
++	char buf[16];

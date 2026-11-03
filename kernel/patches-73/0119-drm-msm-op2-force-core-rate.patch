@@ -1,0 +1,30 @@
+--- a/drivers/gpu/drm/msm/msm_gpu.c
++++ b/drivers/gpu/drm/msm/msm_gpu.c
+@@ -79,6 +79,27 @@
+ 	ret = clk_bulk_prepare_enable(gpu->nr_clocks, gpu->grp_clks);
+ 	pr_info("op2dbg: enable_clk clk_bulk_enable=%d core_rate=%lu\n",
+ 		ret, gpu->core_clk ? clk_get_rate(gpu->core_clk) : 0UL);
++	/* gfx3d_clk_src (RPM SMD) reads back INT_MAX until its rate is set:
++	 * without a real core-clock rate the GPU core logic is not clocked and
++	 * the first VBIF write in hw_init bus-stalls (s116nr-B). Force the rate
++	 * on the core clock (propagates to the RPM parent) and wait for it. */
++	if (gpu->core_clk) {
++		unsigned long r = clk_get_rate(gpu->core_clk);
++		int pi;
++		if (r == 2147483647UL || r == 0) {
++			int sr = clk_set_rate(gpu->core_clk, gpu->fast_rate);
++			pr_info("op2dbg: enable_clk core clk_set_rate(%u)=%d\n",
++				gpu->fast_rate, sr);
++		}
++		for (pi = 0; pi < 100; pi++) {
++			r = clk_get_rate(gpu->core_clk);
++			if (r != 2147483647UL && r > 0)
++				break;
++			msleep(5);
++		}
++		pr_info("op2dbg: enable_clk core_rate after poll=%lu (iters=%d)\n",
++			r, pi);
++	}
+ 	/* let the branch clocks / GDSC settle before hw_init touches VBIF:
+ 	 * on B the first VBIF write in a4xx_hw_init bus-stalls right after
+ 	 * resume if we don't wait (race, s111nr-B panic). */

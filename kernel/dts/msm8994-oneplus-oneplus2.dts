@@ -431,6 +431,10 @@
 	};
 };
 
+#ifdef OP2_CAMSS
+#include "op2-camss.dtsi"
+#endif
+
 #ifdef OP2_DISPLAY
 #include "op2-display.dtsi"
 #endif

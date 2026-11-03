@@ -1,0 +1,512 @@
+From: Matt
+Subject: [PATCH] drm/msm/dsi: port the CAF 20nm DSI PLL as a clk_hw provider (op2 60fps)
+
+Mainline has the msm8994 DSI 20nm PHY but no 20nm PLL driver, so the PLL
+stays at the bootloader's ~115 Mbps/lane (~11 fps in cmd mode). Port the
+CAF 20nm PLL (mdss-dsi-pll-20nm.c + mdss-dsi-20nm-pll-util.c) as clk_hws
+on the PHY node: VCO (parent "ref" = 19.2 MHz), byte = VCO/8, pixel =
+VCO/6 (4 lanes 24 bpp). The full CAF enable sequence (common blocks, loop
+bw, vco rate calc, resetsm, vco start, lock poll, trim cache) runs in
+clk prepare, i.e. when the DSI host enables the link clocks with the
+MDSS GDSC on. Probe/registration/set_rate/recalc never touch MMIO, so a
+boot with the GDSC off cannot hang (unlike the parked 0141 attempt).
+
+When the PLL driver is active the PHY keeps the bootloader's lane setup
+but programs the freshly computed D-PHY timing for the new link rate.
+
+DT (op2-display.dtsi): mmcc and the DSI host take dsi_pll_byte/pixel from
+&mdss_dsi0_phy instead of fixed clocks.
+
+Target: VCO 883.2 MHz = 883 Mbps/lane -> byte 110.4 MHz, pixel 147.218 MHz
+(1080x1920@60).
+
+--- a/drivers/gpu/drm/msm/Makefile
++++ b/drivers/gpu/drm/msm/Makefile
+--- a/drivers/gpu/drm/msm/Makefile
++++ b/drivers/gpu/drm/msm/Makefile
+@@ -156,7 +156,8 @@
+ 			dsi/phy/dsi_phy.o
+ 
+ msm-display-$(CONFIG_DRM_MSM_DSI_28NM_PHY) += dsi/phy/dsi_phy_28nm.o
+-msm-display-$(CONFIG_DRM_MSM_DSI_20NM_PHY) += dsi/phy/dsi_phy_20nm.o
++msm-display-$(CONFIG_DRM_MSM_DSI_20NM_PHY) += dsi/phy/dsi_phy_20nm.o \
++			dsi/phy/dsi_pll_20nm.o
+ msm-display-$(CONFIG_DRM_MSM_DSI_28NM_8960_PHY) += dsi/phy/dsi_phy_28nm_8960.o
+ msm-display-$(CONFIG_DRM_MSM_DSI_14NM_PHY) += dsi/phy/dsi_phy_14nm.o
+ msm-display-$(CONFIG_DRM_MSM_DSI_10NM_PHY) += dsi/phy/dsi_phy_10nm.o
+--- a/drivers/gpu/drm/msm/dsi/phy/dsi_phy.h
++++ b/drivers/gpu/drm/msm/dsi/phy/dsi_phy.h
+@@ -141,4 +141,8 @@
+ int msm_dsi_cphy_timing_calc_v4(struct msm_dsi_dphy_timing *timing,
+ 				struct msm_dsi_phy_clk_request *clk_req);
+ 
++/* 20nm DSI PLL (dsi_pll_20nm.c): register VCO + byte/pixel clocks */
++int pll_20nm_register(struct msm_dsi_phy *phy);
++int pll_20nm_relock(struct msm_dsi_phy *phy);
++
+ #endif /* __DSI_PHY_H__ */
+--- a/drivers/gpu/drm/msm/dsi/phy/dsi_phy_20nm.c
++++ b/drivers/gpu/drm/msm/dsi/phy/dsi_phy_20nm.c
+@@ -89,9 +89,22 @@
+ 	 * computed ones, so they match the PHY setup that is kept.
+ 	 */
+ 	if (phy->bootloader_kept) {
+-		timing->shared_timings.clk_pre = 0x3e;
+-		timing->shared_timings.clk_post = 0x20;
+-		timing->shared_timings.clk_pre_inc_by_2 = false;
++		bool relock = phy->pll_data && strstr(saved_command_line, "op2.dsipll=1");
++
++		if (!relock) {
++			timing->shared_timings.clk_pre = 0x3e;
++			timing->shared_timings.clk_post = 0x20;
++			timing->shared_timings.clk_pre_inc_by_2 = false;
++			return 0;
++		}
++		/*
++		 * op2.dsipll=1: re-lock the PLL to the link rate now (display
++		 * enable: GDSC + PHY are on), then program the freshly
++		 * computed PHY timing. Lane/regulator setup stays the
++		 * bootloader's.
++		 */
++		pll_20nm_relock(phy);
++		dsi_20nm_dphy_set_timing(phy, timing);
+ 		return 0;
+ 	}
+ 
+@@ -166,11 +179,22 @@
+ 	{ .supply = "vcca", .init_load_uA = 10000 },	/* 1.0 V */
+ };
+ 
++static int dsi_20nm_pll_init(struct msm_dsi_phy *phy)
++{
++	int ret = pll_20nm_register(phy);
++
++	if (!ret)
++		DRM_DEV_INFO(&phy->pdev->dev,
++			     "20nm DSI PLL registered (byte=VCO/8, pixel=VCO/6)\n");
++	return ret;
++}
++
+ const struct msm_dsi_phy_cfg dsi_phy_20nm_cfgs = {
+ 	.has_phy_regulator = true,
+ 	.regulator_data = dsi_phy_20nm_regulators,
+ 	.num_regulators = ARRAY_SIZE(dsi_phy_20nm_regulators),
+ 	.ops = {
++		.pll_init = dsi_20nm_pll_init,
+ 		.enable = dsi_20nm_phy_enable,
+ 		.disable = dsi_20nm_phy_disable,
+ 		.parse_dt_properties = dsi_20nm_phy_check_bootloader,
+--- /dev/null
++++ b/drivers/gpu/drm/msm/dsi/phy/dsi_pll_20nm.c
+@@ -0,0 +1,411 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * DSI PLL 20nm driver for msm8994, ported from CAF:
++ *   drivers/clk/qcom/mdss/mdss-dsi-pll-20nm.c
++ *   drivers/clk/qcom/mdss/mdss-dsi-20nm-pll-util.c
++ *
++ * Mainline has the 20nm DSI PHY but no 20nm PLL driver, so the PLL is left
++ * at the bootloader's rate. This registers the VCO as a clk_hw (parent: the
++ * PHY "ref" clock, 19.2 MHz) and exports, through the PHY's provided
++ * clocks:
++ *   byte  = VCO / 8            (DSI_BYTE_PLL_CLK)
++ *   pixel = VCO / 6            (DSI_PIXEL_PLL_CLK, 4 lanes 24 bpp: lane/6)
++ *
++ * All PLL register access happens in prepare/unprepare, i.e. when the DSI
++ * host enables the link clocks (pm_runtime_get_sync has the MDSS GDSC on by
++ * then). Probe/registration only touch RAM, so probing with the GDSC off
++ * cannot hang the bus. set_rate/recalc_rate never touch MMIO either: the
++ * rate is cached and programmed in prepare.
++ */
++
++#include <linux/clk-provider.h>
++#include <linux/delay.h>
++#include <linux/err.h>
++#include <linux/iopoll.h>
++#include <linux/pm_runtime.h>
++#include <linux/slab.h>
++
++#include "dsi_phy.h"
++
++/* PLL register offsets from pll_base (CAF mdss-dsi-20nm-pll-util.c) */
++#define PLL_20NM_SYS_CLK_CTRL		0x000
++#define PLL_20NM_VCOTAIL_EN		0x004
++#define PLL_20NM_CMN_MODE		0x008
++#define PLL_20NM_IE_TRIM		0x00c
++#define PLL_20NM_IP_TRIM		0x010
++#define PLL_20NM_PLL_CNTRL		0x014
++#define PLL_20NM_PHSEL_CONTROL		0x018
++#define PLL_20NM_IPTAT_TRIM_VCCA_TX_SEL	0x01c
++#define PLL_20NM_IP_SETI		0x024
++#define PLL_20NM_BKG_KVCO_CAL_EN	0x02c
++#define PLL_20NM_BIAS_EN_CLKBUFLR_EN	0x030
++#define PLL_20NM_CP_SETI		0x034
++#define PLL_20NM_IP_SETP		0x038
++#define PLL_20NM_CP_SETP		0x03c
++#define PLL_20NM_SYSCLK_EN_SEL_TXBAND	0x048
++#define PLL_20NM_RESETSM_CNTRL		0x04c
++#define PLL_20NM_RESETSM_CNTRL2		0x050
++#define PLL_20NM_RESETSM_CNTRL3		0x054
++#define PLL_20NM_DIV_REF1		0x060
++#define PLL_20NM_DIV_REF2		0x064
++#define PLL_20NM_KVCO_COUNT1		0x068
++#define PLL_20NM_KVCO_CAL_CNTRL		0x070
++#define PLL_20NM_KVCO_CODE		0x074
++#define PLL_20NM_VREF_CFG3		0x080
++#define PLL_20NM_PLLLOCK_CMP1		0x090
++#define PLL_20NM_PLLLOCK_CMP2		0x094
++#define PLL_20NM_PLLLOCK_CMP3		0x098
++#define PLL_20NM_PLLLOCK_CMP_EN		0x09c
++#define PLL_20NM_PLL_VCO_TUNE		0x0a8
++#define PLL_20NM_SSC_EN_CENTER		0x0b4
++#define PLL_20NM_FAUX_EN		0x0fc
++#define PLL_20NM_DIV_FRAC_START1	0x100
++#define PLL_20NM_DIV_FRAC_START2	0x104
++#define PLL_20NM_DIV_FRAC_START3	0x108
++#define PLL_20NM_DEC_START2		0x10c
++#define PLL_20NM_RXTXEPCLK_EN		0x110
++#define PLL_20NM_CRCTRL			0x114
++#define PLL_20NM_LOW_POWER_RO_CONTROL	0x13c
++#define PLL_20NM_POST_DIVIDER_CONTROL	0x140
++#define PLL_20NM_HR_OCLK2_DIVIDER	0x144
++#define PLL_20NM_HR_OCLK3_DIVIDER	0x148
++#define PLL_20NM_RESET_SM		0x150
++#define PLL_20NM_CORE_VCO_TUNE		0x160
++#define PLL_20NM_CORE_KVCO_CODE		0x168
++#define PLL_20NM_DEC_START1		0x0ac
++
++#define PLL_20NM_REF_RATE		19200000UL	/* xo_board */
++#define PLL_20NM_VCO_MIN		300000000UL
++#define PLL_20NM_VCO_MAX		1500000000UL
++/* 1080x1920@60, 4 lanes: VCO = pixel * 6 = byte * 8 = 883.2 MHz */
++#define PLL_20NM_VCO_1080P60		883200000UL
++
++struct pll_20nm_vco_calc {
++	u32 div_frac_start1, div_frac_start2, div_frac_start3;
++	u32 dec_start1, dec_start2;
++	u32 plllock_cmp1, plllock_cmp2, plllock_cmp3;
++};
++
++struct dsi_pll_20nm {
++	struct msm_dsi_phy *phy;
++	struct clk_hw hw;
++	unsigned long vco_rate;		/* cached; programmed in prepare */
++	struct pll_20nm_vco_calc calc;
++	bool prepared;
++	u32 trim_kvco, trim_vco_tune;	/* cached after lock */
++};
++
++/* port of pll_20nm_vco_rate_calc(), pll_en_90_phase = false */
++static void pll_20nm_vco_rate_calc(struct pll_20nm_vco_calc *c,
++				  u64 vco_rate, u64 ref_rate)
++{
++	const u64 multiplier = 1 << 20;
++	const u64 duration = 1024;
++	u64 rem, dec_start_multiple, pll_comp_val;
++	u64 dec_start;
++	s64 comp;
++
++	dec_start_multiple = div64_u64_rem(vco_rate * multiplier,
++					   2 * ref_rate, &rem);
++	dec_start = dec_start_multiple / multiplier;
++
++	c->dec_start1 = (dec_start & 0x7f) | BIT(7);
++	c->dec_start2 = ((dec_start & 0x80) >> 7) | BIT(1);
++	c->div_frac_start1 = (rem & 0x7f) | BIT(7);
++	c->div_frac_start2 = ((rem >> 7) & 0x7f) | BIT(7);
++	c->div_frac_start3 = ((rem >> 14) & 0x3f) | BIT(6);
++
++	comp = div64_u64(dec_start_multiple * 2 * duration,
++			 10 * multiplier) - 1;
++	pll_comp_val = (u64)comp;
++	c->plllock_cmp1 = pll_comp_val & 0xff;
++	c->plllock_cmp2 = (pll_comp_val >> 8) & 0xff;
++	c->plllock_cmp3 = (pll_comp_val >> 16) & 0xff;
++}
++
++static void pll_20nm_config_common_block_1(void __iomem *b)
++{
++	writel(0x82, b + PLL_20NM_VCOTAIL_EN);
++	writel(0x2a, b + PLL_20NM_BIAS_EN_CLKBUFLR_EN);
++	writel(0x2b, b + PLL_20NM_BIAS_EN_CLKBUFLR_EN);
++	writel(0x02, b + PLL_20NM_RESETSM_CNTRL3);
++}
++
++static void pll_20nm_config_common_block_2(void __iomem *b)
++{
++	writel(0x40, b + PLL_20NM_SYS_CLK_CTRL);
++	writel(0x0f, b + PLL_20NM_IE_TRIM);
++	writel(0x0f, b + PLL_20NM_IP_TRIM);
++	writel(0x08, b + PLL_20NM_PHSEL_CONTROL);
++	writel(0x0e, b + PLL_20NM_IPTAT_TRIM_VCCA_TX_SEL);
++	writel(0x08, b + PLL_20NM_BKG_KVCO_CAL_EN);
++	writel(0x4a, b + PLL_20NM_SYSCLK_EN_SEL_TXBAND);
++	writel(0x00, b + PLL_20NM_DIV_REF1);
++	writel(0x01, b + PLL_20NM_DIV_REF2);
++	writel(0x07, b + PLL_20NM_PLL_CNTRL);
++	writel(0x1f, b + PLL_20NM_KVCO_CAL_CNTRL);
++	writel(0x8a, b + PLL_20NM_KVCO_COUNT1);
++	writel(0x10, b + PLL_20NM_VREF_CFG3);
++	writel(0x00, b + PLL_20NM_SSC_EN_CENTER);
++	writel(0x0c, b + PLL_20NM_FAUX_EN);
++	writel(0x0a, b + PLL_20NM_RXTXEPCLK_EN);
++	writel(0x0f, b + PLL_20NM_LOW_POWER_RO_CONTROL);
++	writel(0x00, b + PLL_20NM_CMN_MODE);
++}
++
++static void pll_20nm_config_loop_bw(void __iomem *b)
++{
++	writel(0x03, b + PLL_20NM_IP_SETI);
++	writel(0x3f, b + PLL_20NM_CP_SETI);
++	writel(0x03, b + PLL_20NM_IP_SETP);
++	writel(0x1f, b + PLL_20NM_CP_SETP);
++	writel(0x77, b + PLL_20NM_CRCTRL);
++}
++
++static void pll_20nm_config_vco_rate(void __iomem *b,
++				    const struct pll_20nm_vco_calc *c)
++{
++	writel(c->div_frac_start1, b + PLL_20NM_DIV_FRAC_START1);
++	writel(c->div_frac_start2, b + PLL_20NM_DIV_FRAC_START2);
++	writel(c->div_frac_start3, b + PLL_20NM_DIV_FRAC_START3);
++	writel(c->dec_start1, b + PLL_20NM_DEC_START1);
++	writel(c->dec_start2, b + PLL_20NM_DEC_START2);
++	writel(c->plllock_cmp1, b + PLL_20NM_PLLLOCK_CMP1);
++	writel(c->plllock_cmp2, b + PLL_20NM_PLLLOCK_CMP2);
++	writel(c->plllock_cmp3, b + PLL_20NM_PLLLOCK_CMP3);
++	writel(0x01, b + PLL_20NM_PLLLOCK_CMP_EN);
++}
++
++static void pll_20nm_config_resetsm(void __iomem *b)
++{
++	writel(0x00, b + PLL_20NM_KVCO_CODE);
++	writel(0x00, b + PLL_20NM_PLL_VCO_TUNE);
++	writel(0x24, b + PLL_20NM_RESETSM_CNTRL);
++	writel(0x07, b + PLL_20NM_RESETSM_CNTRL2);
++}
++
++static void pll_20nm_config_vco_start(void __iomem *b)
++{
++	writel(0x03, b + PLL_20NM_VCOTAIL_EN);
++	writel(0x02, b + PLL_20NM_RESETSM_CNTRL3);
++	udelay(10);
++	writel(0x03, b + PLL_20NM_RESETSM_CNTRL3);
++}
++
++static bool pll_20nm_is_locked(void __iomem *b)
++{
++	u32 v;
++
++	if (readl_poll_timeout(b + PLL_20NM_RESET_SM, v, v & BIT(5),
++			       100, 200000))
++		return false;
++	if (readl_poll_timeout(b + PLL_20NM_RESET_SM, v, v & BIT(6),
++			       100, 200000))
++		return false;
++	return true;
++}
++
++static void pll_20nm_config_powerdown(void __iomem *b)
++{
++	writel(0x00, b + PLL_20NM_SYS_CLK_CTRL);
++	writel(0x01, b + PLL_20NM_CMN_MODE);
++	writel(0x82, b + PLL_20NM_VCOTAIL_EN);
++	writel(0x02, b + PLL_20NM_BIAS_EN_CLKBUFLR_EN);
++	writel(0x06, b + PLL_20NM_RESETSM_CNTRL3);
++}
++
++/* PLL registers live in the MDSS power domain: only touch them when the
++ * MDSS GDSC is on, i.e. the mdss parent device is runtime-active. Checking
++ * pm_runtime_active() needs no MMIO, so it is safe at any time. */
++static bool pll_20nm_gdsc_on(struct dsi_pll_20nm *pll)
++{
++	struct device *mdss = pll->phy->pdev->dev.parent;
++
++	return mdss && pm_runtime_active(mdss);
++}
++
++/* full CAF enable sequence (pll_20nm_vco_enable_seq + init_lock path) */
++static int pll_20nm_enable(struct dsi_pll_20nm *pll)
++{
++	void __iomem *b = pll->phy->pll_base;
++
++	if (!pll_20nm_gdsc_on(pll)) {
++		DRM_DEV_INFO(&pll->phy->pdev->dev,
++			     "20nm DSI PLL: MDSS GDSC off, skipping relock (bootloader PLL keeps running)\n");
++		return -EAGAIN;
++	}
++
++	pll_20nm_config_common_block_1(b);
++	pll_20nm_config_common_block_2(b);
++	pll_20nm_config_loop_bw(b);
++
++	/* post dividers: ndiv = 1, byte path /4, pixel path /3
++	 * (byte = VCO/8, pixel = VCO/6 with the fixed /2 in the src divs) */
++	writel(0x90, b + PLL_20NM_POST_DIVIDER_CONTROL);
++	writel(3, b + PLL_20NM_HR_OCLK2_DIVIDER);	/* /4 */
++	writel(2, b + PLL_20NM_HR_OCLK3_DIVIDER);	/* /3 */
++
++	pll_20nm_config_vco_rate(b, &pll->calc);
++	pll_20nm_config_resetsm(b);
++	pll_20nm_config_vco_start(b);
++	wmb();
++
++	if (!pll_20nm_is_locked(b)) {
++		/* non-fatal: keep the bootloader's PLL running so the boot
++		 * and the panel init never fail because of the relock */
++		DRM_DEV_ERROR(&pll->phy->pdev->dev,
++			      "20nm DSI PLL failed to lock at %lu Hz, keeping bootloader PLL\n",
++			      pll->vco_rate);
++		return 0;
++	}
++
++	pll->trim_kvco = readl(b + PLL_20NM_CORE_KVCO_CODE);
++	pll->trim_vco_tune = readl(b + PLL_20NM_CORE_VCO_TUNE);
++	DRM_DEV_INFO(&pll->phy->pdev->dev,
++		     "20nm DSI PLL locked: VCO=%lu Hz (kvco=0x%x vco_tune=0x%x)\n",
++		     pll->vco_rate, pll->trim_kvco, pll->trim_vco_tune);
++	return 0;
++}
++
++static unsigned long pll_20nm_recalc_rate(struct clk_hw *hw,
++					  unsigned long parent_rate)
++{
++	struct dsi_pll_20nm *pll = container_of(hw, struct dsi_pll_20nm, hw);
++
++	/* cached only: reading dec_start with the GDSC off would hang */
++	return pll->vco_rate;
++}
++
++/* the 20nm VCO only locks reliably at integer dec_start, i.e. VCO must be
++ * a multiple of 2*ref (38.4 MHz); quantize so the display path's
++ * 883308000 (pixel 147218000 * 6) becomes exactly 883200000 (dec_start=23) */
++static unsigned long pll_20nm_quantize(unsigned long rate)
++{
++	const u64 step = 2 * PLL_20NM_REF_RATE;
++
++	rate = clamp_t(unsigned long, rate, PLL_20NM_VCO_MIN, PLL_20NM_VCO_MAX);
++	return div64_u64(rate + step / 2, step) * step;
++}
++
++static int pll_20nm_determine_rate(struct clk_hw *hw,
++				   struct clk_rate_request *req)
++{
++	req->rate = pll_20nm_quantize(req->rate);
++	return 0;
++}
++
++static int pll_20nm_set_rate(struct clk_hw *hw, unsigned long rate,
++			     unsigned long parent_rate)
++{
++	struct dsi_pll_20nm *pll = container_of(hw, struct dsi_pll_20nm, hw);
++
++	/* no MMIO here: set_rate can run before the GDSC is on */
++	rate = pll_20nm_quantize(rate);
++	pll->vco_rate = rate;
++	pll_20nm_vco_rate_calc(&pll->calc, rate, PLL_20NM_REF_RATE);
++	return 0;
++}
++
++static int pll_20nm_prepare(struct clk_hw *hw)
++{
++	struct dsi_pll_20nm *pll = container_of(hw, struct dsi_pll_20nm, hw);
++	int ret;
++
++	if (pll->prepared)
++		return 0;
++
++	ret = pll_20nm_enable(pll);
++	if (ret)
++		return 0;	/* GDSC off: non-fatal, retried at phy enable */
++	pll->prepared = true;
++	return 0;
++}
++
++static void pll_20nm_unprepare(struct clk_hw *hw)
++{
++	struct dsi_pll_20nm *pll = container_of(hw, struct dsi_pll_20nm, hw);
++
++	/* never prepared by us: the bootloader owns the PLL, leave it on */
++	if (!pll->prepared)
++		return;
++	pll_20nm_config_powerdown(pll->phy->pll_base);
++	pll->prepared = false;
++}
++
++static int pll_20nm_is_enabled(struct clk_hw *hw)
++{
++	struct dsi_pll_20nm *pll = container_of(hw, struct dsi_pll_20nm, hw);
++
++	return pll->prepared;
++}
++
++static const struct clk_ops pll_20nm_clk_ops = {
++	.recalc_rate = pll_20nm_recalc_rate,
++	.determine_rate = pll_20nm_determine_rate,
++	.set_rate = pll_20nm_set_rate,
++	.prepare = pll_20nm_prepare,
++	.unprepare = pll_20nm_unprepare,
++	.is_enabled = pll_20nm_is_enabled,
++};
++
++/* re-run the enable sequence at display enable (GDSC + PHY definitely on) */
++int pll_20nm_relock(struct msm_dsi_phy *phy)
++{
++	struct dsi_pll_20nm *pll = phy->pll_data;
++
++	if (!pll)
++		return -ENODEV;
++	pll->prepared = false;	/* force a fresh attempt */
++	return pll_20nm_enable(pll);
++}
++
++int pll_20nm_register(struct msm_dsi_phy *phy)
++{
++	struct device *dev = &phy->pdev->dev;
++	struct dsi_pll_20nm *pll;
++	struct clk_init_data init = {
++		.parent_data = &(const struct clk_parent_data){
++			.fw_name = "ref",
++		},
++		.num_parents = 1,
++		.ops = &pll_20nm_clk_ops,
++	};
++	char name[32];
++	struct clk_hw *hw;
++	int ret;
++
++	pll = devm_kzalloc(dev, sizeof(*pll), GFP_KERNEL);
++	if (!pll)
++		return -ENOMEM;
++	pll->phy = phy;
++	/* pretend the target rate from the start so recalc/round work
++	 * before the first prepare; prepare programs it for real */
++	pll->vco_rate = PLL_20NM_VCO_1080P60;
++	pll_20nm_vco_rate_calc(&pll->calc, pll->vco_rate, PLL_20NM_REF_RATE);
++
++	snprintf(name, sizeof(name), "dsi%d_vco_20nm", phy->id);
++	init.name = name;
++	pll->hw.init = &init;
++	ret = devm_clk_hw_register(dev, &pll->hw);
++	if (ret)
++		return ret;
++	phy->vco_hw = &pll->hw;
++	phy->pll_data = pll;
++
++	snprintf(name, sizeof(name), "dsi%dpllbyte_20nm", phy->id);
++	hw = devm_clk_hw_register_fixed_factor_parent_hw(dev, name, &pll->hw,
++							 CLK_SET_RATE_PARENT, 1, 8);
++	if (IS_ERR(hw))
++		return PTR_ERR(hw);
++	phy->provided_clocks->hws[DSI_BYTE_PLL_CLK] = hw;
++
++	/* 4 lanes, 24 bpp: pixel = lane / 6 = VCO / 6 */
++	snprintf(name, sizeof(name), "dsi%dpll_20nm", phy->id);
++	hw = devm_clk_hw_register_fixed_factor_parent_hw(dev, name, &pll->hw,
++							 CLK_SET_RATE_PARENT, 1, 6);
++	if (IS_ERR(hw))
++		return PTR_ERR(hw);
++	phy->provided_clocks->hws[DSI_PIXEL_PLL_CLK] = hw;
++
++	return 0;
++}

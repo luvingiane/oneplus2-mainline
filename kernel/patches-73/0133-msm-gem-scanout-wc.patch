@@ -1,0 +1,19 @@
+--- a/drivers/gpu/drm/msm/msm_gem.c
++++ b/drivers/gpu/drm/msm/msm_gem.c
+@@ -1309,8 +1309,16 @@ static int msm_gem_new_impl(struct drm_device *dev, uint32_t flags,
+ 	msm_obj = kzalloc_obj(*msm_obj);
+ 	if (!msm_obj)
+ 		return -ENOMEM;
+ 
+ 	msm_obj->flags = flags;
++	/* op2 0133: scanout buffers are read by the MDP/DSI DMA, which is not
++	 * cache-coherent (it bypasses the SMMU, see patch 0004). Force WC so
++	 * that CPU writes (software renderer / fbdev / pixman) go straight to
++	 * RAM and the display DMA sees them; with a cached mapping the panel
++	 * shows horizontal garbage bands when the CPU renders (sysmem/pixman).
++	 * The GPU path is unaffected: it uses IOVA, not the CPU mapping. */
++	if (msm_obj->flags & MSM_BO_SCANOUT)
++		msm_obj->flags |= MSM_BO_WC;
+ 	msm_obj->madv = MSM_MADV_WILLNEED;
+ 
+ 	INIT_LIST_HEAD(&msm_obj->node);

@@ -1,0 +1,20 @@
+--- a/drivers/gpu/drm/msm/adreno/a4xx_gpu.c
++++ b/drivers/gpu/drm/msm/adreno/a4xx_gpu.c
+@@ -417,7 +417,8 @@
+ }
+ 
+ static irqreturn_t a4xx_irq(struct msm_gpu *gpu)
+-{
++{	pr_info("op2dbg: a4xx_irq enter\n");
++
+ 	uint32_t status;
+ 
+ 	status = gpu_read(gpu, REG_A4XX_RBBM_INT_0_STATUS);
+@@ -435,6 +436,7 @@
+ 	msm_gpu_retire(gpu);
+ 
+ 	return IRQ_HANDLED;
++	pr_info("op2dbg: a4xx_irq done\n");
+ }
+ 
+ static const unsigned int a4xx_registers[] = {

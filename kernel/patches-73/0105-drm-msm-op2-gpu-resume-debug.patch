@@ -1,0 +1,112 @@
+--- a/drivers/gpu/drm/msm/msm_gpu.c
++++ b/drivers/gpu/drm/msm/msm_gpu.c
+@@ -59,14 +59,25 @@
+ 
+ static int enable_clk(struct msm_gpu *gpu)
+ {
+-	if (gpu->core_clk && gpu->fast_rate)
+-		dev_pm_opp_set_rate(&gpu->pdev->dev, gpu->fast_rate);
++	int ret;
++
++	if (gpu->core_clk && gpu->fast_rate) {
++		ret = dev_pm_opp_set_rate(&gpu->pdev->dev, gpu->fast_rate);
++		pr_info("op2dbg: enable_clk opp_set_rate(%u)=%d\n",
++			gpu->fast_rate, ret);
++	} else {
++		pr_info("op2dbg: enable_clk SKIP opp core_clk=%d fast_rate=%u\n",
++			gpu->core_clk != NULL, gpu->fast_rate);
++	}
+ 
+ 	/* Set the RBBM timer rate to 19.2Mhz */
+ 	if (gpu->rbbmtimer_clk)
+ 		clk_set_rate(gpu->rbbmtimer_clk, 19200000);
+ 
+-	return clk_bulk_prepare_enable(gpu->nr_clocks, gpu->grp_clks);
++	ret = clk_bulk_prepare_enable(gpu->nr_clocks, gpu->grp_clks);
++	pr_info("op2dbg: enable_clk clk_bulk_enable=%d core_rate=%lu\n",
++		ret, gpu->core_clk ? clk_get_rate(gpu->core_clk) : 0UL);
++	return ret;
+ }
+ 
+ static int disable_clk(struct msm_gpu *gpu)
+@@ -106,14 +117,17 @@
+ 	trace_msm_gpu_resume(0);
+ 
+ 	ret = enable_pwrrail(gpu);
++	pr_info("op2dbg: pm_resume enable_pwrrail=%d\n", ret);
+ 	if (ret)
+ 		return ret;
+ 
+ 	ret = enable_clk(gpu);
++	pr_info("op2dbg: pm_resume enable_clk=%d\n", ret);
+ 	if (ret)
+ 		return ret;
+ 
+ 	ret = enable_axi(gpu);
++	pr_info("op2dbg: pm_resume enable_axi=%d\n", ret);
+ 	if (ret)
+ 		return ret;
+ 
+--- a/drivers/gpu/drm/msm/adreno/a4xx_gpu.c
++++ b/drivers/gpu/drm/msm/adreno/a4xx_gpu.c
+@@ -573,7 +573,9 @@
+ 	struct adreno_gpu *adreno_gpu = to_adreno_gpu(gpu);
+ 	int ret;
+ 
++	pr_info("op2dbg: a4xx_pm_resume enter\n");
+ 	ret = msm_gpu_pm_resume(gpu);
++	pr_info("op2dbg: a4xx_pm_resume msm_gpu_pm_resume=%d\n", ret);
+ 	if (ret)
+ 		return ret;
+ 
+@@ -581,7 +583,9 @@
+ 		unsigned int reg;
+ 		int timeout = 100000; /* 100000 * 5 us = 500 ms */
+ 		/* Set the default register values; set SW_COLLAPSE to 0 */
++		pr_info("op2dbg: a430 gpu_write RBBM_POWER_CNTL_IP\n");
+ 		gpu_write(gpu, REG_A4XX_RBBM_POWER_CNTL_IP, 0x778000);
++		pr_info("op2dbg: a430 gpu_write done, polling\n");
+ 		do {
+ 			udelay(5);
+ 			reg = gpu_read(gpu, REG_A4XX_RBBM_POWER_STATUS);
+@@ -599,7 +603,9 @@
+ 				return -ETIMEDOUT;
+ 			}
+ 		} while (!(reg & A4XX_RBBM_POWER_CNTL_IP_SP_TP_PWR_ON));
++		pr_info("op2dbg: a430 poll done reg=%08x\n", reg);
+ 	}
++	pr_info("op2dbg: a4xx_pm_resume done\n");
+ 	return 0;
+ }
+ 
+--- a/drivers/pmdomain/qcom/rpmpd.c
++++ b/drivers/pmdomain/qcom/rpmpd.c
+@@ -1018,6 +1018,10 @@
+ 
+ 	active_corner = max(this_active_corner, peer_active_corner);
+ 
++	pr_info("op2dbg: rpmpd_agg %s active_corner=%u (this=%u peer=%u synced=%d)\n",
++		pd->pd.name, active_corner, this_active_corner, peer_active_corner,
++		pd->state_synced);
++
+ 	ret = rpmpd_send_corner(pd, QCOM_SMD_RPM_ACTIVE_STATE, active_corner);
+ 	if (ret)
+ 		return ret;
+@@ -1039,6 +1043,7 @@
+ 		return ret;
+ 
+ 	pd->enabled = true;
++	pr_info("op2dbg: rpmpd_power_on %s corner=%u\n", domain->name, pd->corner);
+ 
+ 	if (pd->corner)
+ 		ret = rpmpd_aggregate_corner(pd);
+@@ -1072,6 +1077,9 @@
+ 
+ 	guard(mutex)(&rpmpd_lock);
+ 
++	pr_info("op2dbg: rpmpd_set_perf %s state=%u enabled=%d\n",
++		domain->name, state, pd->enabled);
++
+ 	pd->corner = state;
+ 
+ 	/* Always send updates for vfc and vfl */

@@ -1,0 +1,32 @@
+--- a/drivers/gpu/drm/msm/msm_gpu.c
++++ b/drivers/gpu/drm/msm/msm_gpu.c
+@@ -698,6 +698,7 @@
+ static void hangcheck_handler(struct timer_list *t)
+ {
+ 	struct msm_gpu *gpu = timer_container_of(gpu, t, hangcheck_timer);
++	pr_info("op2dbg: hangcheck_handler enter\n");
+ 	struct drm_device *dev = gpu->dev;
+ 	struct msm_ringbuffer *ring = gpu->funcs->active_ring(gpu);
+ 	uint32_t fence = ring->memptrs->fence;
+@@ -826,6 +827,7 @@
+ /* call from irq handler to schedule work to retire bo's */
+ void msm_gpu_retire(struct msm_gpu *gpu)
+ {
++	pr_info("op2dbg: msm_gpu_retire enter\n");
+ 	int i;
+ 
+ 	for (i = 0; i < gpu->nr_rings; i++)
+@@ -943,6 +945,13 @@
+ 	gpu->funcs = funcs;
+ 	gpu->name = name;
+ 
++	/* Keep the GPU out of runtime suspend: the OXILI_GX GDSC is a
++	 * power-domain of this device, so a runtime suspend powers the GPU
++	 * off and any later register access bus-stalls (hard lockup, NMI
++	 * unresponsive, s114nr-A/s115nr-A). */
++	pm_runtime_forbid(&pdev->dev);
++	pr_info("op2dbg: pm_runtime_forbid set on gpu (GDSC GX kept on)\n");
++
+ 	gpu->worker = kthread_run_worker(0, "gpu-worker");
+ 	if (IS_ERR(gpu->worker)) {
+ 		ret = PTR_ERR(gpu->worker);

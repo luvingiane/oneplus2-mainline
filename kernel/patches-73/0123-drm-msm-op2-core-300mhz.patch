@@ -1,0 +1,16 @@
+--- a/drivers/gpu/drm/msm/msm_gpu.c
++++ b/drivers/gpu/drm/msm/msm_gpu.c
+@@ -87,9 +87,10 @@
+ 		unsigned long r = clk_get_rate(gpu->core_clk);
+ 		int pi;
+ 		if (r == 2147483647UL || r == 0) {
+-			int sr = clk_set_rate(gpu->core_clk, gpu->fast_rate);
+-			pr_info("op2dbg: enable_clk core clk_set_rate(%u)=%d\n",
+-				gpu->fast_rate, sr);
++			/* 300 MHz NOM: rail S2B ~980-1035mV (rpmpd non alza il corner,
++			 * gpu-190) — 600 MHz a ~1.0V può undervoltare l'A430 */
++			int sr = clk_set_rate(gpu->core_clk, 300000000);
++			pr_info("op2dbg: enable_clk core clk_set_rate(300M)=%d\n", sr);
+ 		}
+ 		for (pi = 0; pi < 100; pi++) {
+ 			r = clk_get_rate(gpu->core_clk);

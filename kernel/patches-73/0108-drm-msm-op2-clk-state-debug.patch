@@ -1,0 +1,25 @@
+--- a/drivers/gpu/drm/msm/msm_gpu.c
++++ b/drivers/gpu/drm/msm/msm_gpu.c
+@@ -13,6 +13,7 @@
+ #include "msm_gpu_trace.h"
+ //#include "adreno/adreno_gpu.h"
+ 
++#include <linux/clk-provider.h>
+ #include <linux/string_helpers.h>
+ #include <linux/devcoredump.h>
+ #include <linux/sched/task.h>
+@@ -77,6 +78,14 @@
+ 	ret = clk_bulk_prepare_enable(gpu->nr_clocks, gpu->grp_clks);
+ 	pr_info("op2dbg: enable_clk clk_bulk_enable=%d core_rate=%lu\n",
+ 		ret, gpu->core_clk ? clk_get_rate(gpu->core_clk) : 0UL);
++	{
++		int ci;
++		for (ci = 0; ci < gpu->nr_clocks; ci++)
++			pr_info("op2dbg: clk[%d] %s en=%d rate=%lu\n", ci,
++				__clk_get_name(gpu->grp_clks[ci].clk),
++				__clk_is_enabled(gpu->grp_clks[ci].clk),
++				clk_get_rate(gpu->grp_clks[ci].clk));
++	}
+ 	return ret;
+ }
+ 

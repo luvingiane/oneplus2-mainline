@@ -1,0 +1,40 @@
+--- a/drivers/gpu/drm/msm/msm_gpu.c
++++ b/drivers/gpu/drm/msm/msm_gpu.c
+@@ -91,15 +91,19 @@
+ 
+ static int disable_clk(struct msm_gpu *gpu)
+ {
++	pr_info("op2dbg: disable_clk enter\n");
+ 	clk_bulk_disable_unprepare(gpu->nr_clocks, gpu->grp_clks);
++	pr_info("op2dbg: disable_clk bulk done\n");
+ 
+ 	/*
+ 	 * Set the clock to a deliberately low rate. On older targets the clock
+ 	 * speed had to be non zero to avoid problems. On newer targets this
+ 	 * will be rounded down to zero anyway so it all works out.
+ 	 */
+-	if (gpu->core_clk)
+-		dev_pm_opp_set_rate(&gpu->pdev->dev, 27000000);
++	if (gpu->core_clk) {
++		int rr = dev_pm_opp_set_rate(&gpu->pdev->dev, 27000000);
++		pr_info("op2dbg: disable_clk opp_set_rate(27M)=%d\n", rr);
++	}
+ 
+ 	if (gpu->rbbmtimer_clk)
+ 		clk_set_rate(gpu->rbbmtimer_clk, 0);
+@@ -151,6 +155,7 @@
+ {
+ 	int ret;
+ 
++	pr_info("op2dbg: pm_suspend enter\n");
+ 	DBG("%s", gpu->name);
+ 	trace_msm_gpu_suspend(0);
+ 
+@@ -169,6 +174,7 @@
+ 		return ret;
+ 
+ 	gpu->suspend_count++;
++	pr_info("op2dbg: pm_suspend done count=%d\n", gpu->suspend_count);
+ 
+ 	return 0;
+ }

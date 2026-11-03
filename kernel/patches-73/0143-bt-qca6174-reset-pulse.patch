@@ -1,0 +1,23 @@
+From: Matt
+Subject: [PATCH] bluetooth: hci_qca: pulse BT_EN low 50ms on ROME power-on
+
+CAF drivers/bluetooth/bluetooth-power.c bt_configure_gpios(1) drives
+the reset gpio low for 50 ms before releasing it; mainline only
+raises bt_en. On the OnePlus 2 (QCA6174 ROME) the chip stays mute
+(command 0xfc00 tx timeout) without the reset pulse.
+
+--- a/drivers/bluetooth/hci_qca.c
++++ b/drivers/bluetooth/hci_qca.c
+@@ -1870,6 +1870,12 @@
+ 	default:
+ 		qcadev = serdev_device_get_drvdata(hu->serdev);
+ 		if (qcadev->bt_en) {
++			/* CAF bluetooth-power.c bt_configure_gpios(1): drive the
++			 * reset gpio low for 50 ms before releasing it — ROME
++			 * chips need the pulse to start.
++			 */
++			gpiod_set_value_cansleep(qcadev->bt_en, 0);
++			msleep(50);
+ 			gpiod_set_value_cansleep(qcadev->bt_en, 1);
+ 			/* Controller needs time to bootup. */
+ 			msleep(150);

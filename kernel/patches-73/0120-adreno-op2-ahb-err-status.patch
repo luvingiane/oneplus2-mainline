@@ -1,0 +1,12 @@
+--- a/drivers/gpu/drm/msm/adreno/a4xx_gpu.c
++++ b/drivers/gpu/drm/msm/adreno/a4xx_gpu.c
+@@ -423,6 +423,9 @@
+ 
+ 	status = gpu_read(gpu, REG_A4XX_RBBM_INT_0_STATUS);
+ 	pr_info("op2dbg: a4xx_irq status=%08x\n", status);
++	if (status & A4XX_INT0_RBBM_AHB_ERROR)
++		pr_info("op2dbg: a4xx_irq AHB_ERROR_STATUS=%08x\n",
++			gpu_read(gpu, REG_A4XX_RBBM_AHB_ERROR_STATUS));
+ 	DBG("%s: Int status %08x", gpu->name, status);
+ 
+ 	if (status & A4XX_INT0_CP_REG_PROTECT_FAULT) {
