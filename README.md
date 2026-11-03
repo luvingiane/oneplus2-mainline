@@ -14,9 +14,12 @@ on-phone tools and the complete bring-up diary.
 
 ## Status (short)
 
+Latest milestone (2026-11-03): the hardware GPU renders the ztOS UI on mainline 7.3, see
+[docs/MILESTONE-2026-11-03.md](docs/MILESTONE-2026-11-03.md).
+
 | Part | Linux 7.3 | Notes |
 |------|-----------|-------|
-| CPU, RAM, eMMC, PMICs, RPM | works | 4 cores with the CAF-style `qcom,8994-arm-cortex-acc` bring-up (patch 0010) |
+| CPU, RAM, eMMC, PMICs, RPM | works | 4 cores with the CAF-style `qcom,8994-arm-cortex-acc` bring-up (patch 0010); no cpufreq yet (the cores stay at the bootloader clock, about 600 MHz) and the A57 cluster is not brought online |
 | Display (JDI JD35695, DSI command mode) | works | bootloader framebuffer + own panel driver (`kernel/panel/`) |
 | Touchscreen, keys, alert slider | works | slider = `gpio-keys` F13/F15 |
 | USB (device, NCM network + serial) | works when started from fastboot | after a normal boot the PC does not see the phone yet (see LOG.md) |
@@ -24,7 +27,7 @@ on-phone tools and the complete bring-up diary.
 | Wi-Fi (QCA6174 on PCIe) | not yet | PCIe PHY: aux clock and PHY reset fixed (0028, 0020), PLL still does not lock |
 | Bluetooth | not yet | chip does not answer |
 | Audio | loudspeaker works | ADSP boots (`op2-adsp.dtsi`), q6 quaternary MI2S -> TFA9890 amplifier (`op2-audio.dtsi`, patch 0029); the WCD9330 codec (mics, earpiece, jack) has no mainline driver |
-| GPU (Adreno 430) | works on 6.12 | GPU SMMU attached + physical addresses (`patches-612/0104`, `msm.op2_gpu_phys=1`), Mesa freedreno FD430; GMEM (OCMEM) still refused by TrustZone: use `FD_MESA_DEBUG=sysmem` |
+| GPU (Adreno 430) | works on 7.3 and 6.12 | **7.3: hardware GL renders the whole ztMETRO UI from the eMMC, no hang, no failed submit** (patches `0130` + `0144`: a VM with a no-op MMU, IOVA == physical; cmdline `msm.identity_iova=1 msm.op2_gpu_phys=1 cma=768M`; Mesa freedreno FD430 with `FD_MESA_DEBUG=sysmem`, the OCMEM/GMEM path is still refused by TrustZone), see [docs/MILESTONE-2026-11-03.md](docs/MILESTONE-2026-11-03.md). 6.12: SMMU attached + physical addresses (`patches-612/0104`). GPU clock is fixed at 300 MHz |
 
 Full per-component state: [STATUS.md](STATUS.md). Day-by-day work with commands,
 register dumps and results: [LOG.md](LOG.md).
@@ -34,6 +37,7 @@ register dumps and results: [LOG.md](LOG.md).
 | Path | What |
 |------|------|
 | `kernel/patches/` | patches for Linux 7.3 (most also apply to 6.12), applied in order |
+| `kernel/patches-73/` | patches only for 7.3 (GPU on physical addresses, camss, PCIe/DSI work); pass them with `EXTRA_PATCHES=$PWD/kernel/patches-73` |
 | `kernel/patches-612/` | patches only for 6.12 (GPU on a VRAM carveout, bring-up trace) |
 | `kernel/dts/` | `msm8994-oneplus-oneplus2.dts` and `op2-*.dtsi`, switched with `DTS_DEFINES` (`OP2_DISPLAY`, `OP2_SMP`, `OP2_USBPHY`, `OP2_WIFI`, `OP2_GPU`, ...) |
 | `kernel/panel/` | the panel driver |
@@ -56,9 +60,20 @@ bash scripts/build-boot.sh my-image --cmdline "op2.root=/dev/mmcblk1p43"
 fastboot boot out/my-image.img        # RAM only
 ```
 
-`OP2_SERIAL` must be set for the helper scripts that talk to a phone. The second
-phone of the two-phone set-up is recognised by its serial in `initramfs/init` and
-`rootfs-overlay/usr/local/bin/op2-usb-watch` (`SECOND_PHONE_SERIAL`): put yours there.
+With the hardware GPU (7.3):
+
+```bash
+EXTRA_PATCHES=$PWD/kernel/patches-73 \
+DTS_DEFINES="OP2_DISPLAY OP2_SMP OP2_USBPHY OP2_GPU OP2_GPU_RPMCLK" bash scripts/build-kernel.sh
+bash scripts/build-boot.sh gpu --cmdline "msm.identity_iova=1 msm.op2_gpu_phys=1 arm64.late_cpu_conflicts=warn op2.gpuhw=1 cma=768M op2.root=/dev/mmcblk1p43"
+```
+
+If the kernel tree was built on another machine, make sure `scripts/dtc/dtc` and `scripts/mod/modpost`
+are executable: otherwise `make` fails and the DTBs stay stale (`build-kernel.sh` now stops on a failed `make`).
+
+`OP2_SERIAL` must be set for the helper scripts that talk to a phone. A second
+phone on the same computer is booted with `op2.net=44` on its command line (`initramfs/init`) and
+recognised by its serial in `rootfs-overlay/usr/local/bin/op2-usb-watch` (`SECOND_PHONE_SERIAL`): put yours there.
 
 ## Upstream fixes found on the way
 
