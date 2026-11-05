@@ -1,0 +1,15 @@
+--- a/drivers/bluetooth/hci_qca.c
++++ b/drivers/bluetooth/hci_qca.c
+@@ -2004,6 +2004,12 @@
+ 
+ 	default:
+ 		qca_set_speed(hu, QCA_INIT_SPEED);
++		/* OP2 diagnostic: read the SoC version at the init baud (115200)
++		 * before switching to the operating speed, to tell a mute chip
++		 * from a baud/flow-control problem on the QCA6174 UART. */
++		ret = qca_read_soc_version(hdev, &ver, soc_type);
++		if (ret)
++			goto out;
+ 	}
+ 
+ 	/* Setup user speed if needed */

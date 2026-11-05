@@ -1,6 +1,12 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * OnePlus 2 (DTS_DEFINES=OP2_WIFI): Wi-Fi of the QCA6174 combo on PCIe0.
+ * OnePlus 2 (DTS_DEFINES=OP2_WIFI): Wi-Fi of the QCA6174 combo on PCIe.
+ * Default (no OP2_WIFI_PCIE1): PCIe0 (PARF 0xfc520000, PHY 0xfc526000),
+ * as the CAF msm8994.dtsi pcie0 node suggests. With OP2_WIFI_PCIE1: PCIe1
+ * (PARF 0xfc528000, PHY 0xfc52e000, DBI 0xf8800000, PERST gpio 35, WAKE 37,
+ * CLKREQ gpio 36, MSI 271, scm-dev-id 12) — the RC the stock DTBs enable
+ * (pcie0 disabled, pcie1 okay in all 13 stock DTBs) and cnss wlan-rc-num=1
+ * points to. Default off: OP2_WIFI_PCIE1 is not defined.
  *
  * From the OnePlus kernel (msm8994.dtsi:811-887 pcie0, :3586-3593 cnss):
  * PARF 0xfc520000, PHY 0xfc526000, DBI 0xff000000, ELBI 0xff000f20, config
@@ -28,11 +34,30 @@
 
 /* GCC's pcie_0_pipe_clk_src takes the PHY's pipe output (patch 0021) */
 &gcc {
+#ifndef OP2_WIFI_PCIE1
 	clock-names = "xo", "sleep", "pcie_0_pipe";
 	clocks = <&xo_board>, <&sleep_clk>, <&pcie0_phy>;
+#else
+	clock-names = "xo", "sleep", "pcie_1_pipe";
+	clocks = <&xo_board>, <&sleep_clk>, <&pcie1_phy>;
+#endif
 };
 
 &tlmm {
+#if defined(OP2_WIFI_BOOT) || defined(OP2_WIFI_BOOTLOW)
+	/* stock cnss wlan-bootstrap-gpio (tlmm 112): chip strapping, set before WL_EN */
+	wlan-bootstrap-hog {
+		gpio-hog;
+		gpios = <112 GPIO_ACTIVE_HIGH>;
+#ifdef OP2_WIFI_BOOTLOW
+		output-low;
+#else
+		output-high;
+#endif
+		line-name = "wlan-bootstrap";
+	};
+#endif
+
 	/* WL_EN: the Wi-Fi half of the chip out of reset */
 	wlan-en-hog {
 		gpio-hog;
@@ -41,6 +66,7 @@
 		line-name = "wlan-en";
 	};
 
+#ifndef OP2_WIFI_PCIE1
 	pcie0_default: pcie0-default-state {
 		clkreq-pins {
 			pins = "gpio54";
@@ -61,16 +87,49 @@
 			bias-pull-up;
 		};
 	};
+#else
+	/* stock DT pcie1 pinctrl: clkreq gpio36 func pci_e1, perst gpio35,
+	 * wake gpio37 (op2-hw14.dtb pcie1_clkreq/perst/wake) */
+	pcie1_default: pcie1-default-state {
+		clkreq-pins {
+			pins = "gpio36";
+			function = "pci_e1";
+			drive-strength = <2>;
+			bias-pull-up;
+		};
+		perst-pins {
+			pins = "gpio35";
+			function = "gpio";
+			drive-strength = <2>;
+			bias-pull-down;
+		};
+		wake-pins {
+			pins = "gpio37";
+			function = "gpio";
+			drive-strength = <2>;
+			bias-pull-up;
+		};
+	};
+#endif
 };
 
 &soc {
+#ifndef OP2_WIFI_PCIE1
 	pcie0_phy: phy@fc526000 {
 		compatible = "qcom,msm8994-pcie-phy";	/* patch 0019 */
 		reg = <0xfc526000 0x1000>;
+#ifdef OP2_WIFI_REFPIN
+		clocks = <&rpmcc RPM_SMD_LN_BB_CLK>,
+			 <&rpmcc RPM_SMD_LN_BB_CLK_PIN>,
+			 <&gcc PCIE_0_PHY_LDO>,
+			 <&gcc GCC_PCIE_0_PIPE_CLK>;
+		clock-names = "ref", "ref_pin", "ldo", "pipe";
+#else
 		clocks = <&rpmcc RPM_SMD_LN_BB_CLK>,
 			 <&gcc PCIE_0_PHY_LDO>,
 			 <&gcc GCC_PCIE_0_PIPE_CLK>;
 		clock-names = "ref", "ldo", "pipe";
+#endif
 #ifdef OP2_WIFI_PIPE_RESET
 		/* retry of s63 now that the aux clock runs (patch 0028) */
 		resets = <&gcc PCIE_PHY_0_RESET>, <&gcc PCIE_PHY_0_PHY_RESET>;
@@ -143,5 +202,95 @@
 		pinctrl-0 = <&pcie0_default>;
 
 		qcom,scm-dev-id = <11>;
+	};
+#else
+	/* PCIe1 = RC1: the root complex the stock OnePlus 2 DTBs enable and
+	 * cnss qcom,wlan-rc-num=1 points to (PARF 0xfc528000, PHY
+	 * 0xfc52e000, DBI 0xf8800000, ELBI 0xf8800f20, config 0xf8801000,
+	 * io 0xf8880000, bars 0xf8900000; stock op2-hw14.dtb
+	 * qcom,pcie@fc528000). IRQs SPI 271-282, PERST gpio 35, WAKE 37,
+	 * scm-dev-id 12, GDSC pcie_1 (gcc 0x1b44), BCRs 0x1b98/0x1b94. */
+	pcie1_phy: phy@fc52e000 {
+		compatible = "qcom,msm8994-pcie-phy";	/* patch 0019 */
+		reg = <0xfc52e000 0x1000>;
+#ifdef OP2_WIFI_REFPIN
+		clocks = <&rpmcc RPM_SMD_LN_BB_CLK>,
+			 <&rpmcc RPM_SMD_LN_BB_CLK_PIN>,
+			 <&gcc PCIE_1_PHY_LDO>,
+			 <&gcc GCC_PCIE_1_PIPE_CLK>;
+		clock-names = "ref", "ref_pin", "ldo", "pipe";
+#else
+		clocks = <&rpmcc RPM_SMD_LN_BB_CLK>,
+			 <&gcc PCIE_1_PHY_LDO>,
+			 <&gcc GCC_PCIE_1_PIPE_CLK>;
+		clock-names = "ref", "ldo", "pipe";
+#endif
+#ifdef OP2_WIFI_PIPE_RESET
+		resets = <&gcc PCIE_PHY_1_RESET>, <&gcc PCIE_PHY_1_PHY_RESET>;
+		reset-names = "phy", "pipe";
+#else
+		resets = <&gcc PCIE_PHY_1_RESET>;
+		reset-names = "phy";
+#endif
+		vdda-phy-supply = <&pm8994_l28>;
+		vdda-pll-supply = <&pm8994_l12>;
+		#phy-cells = <0>;
+		#clock-cells = <0>;
+		clock-output-names = "pcie_1_pipe_clk";
+	};
+
+	pcie1: pcie@f8800000 {
+		compatible = "qcom,pcie-msm8994";	/* patch 0020 */
+		reg = <0xf8800000 0xf1d>,
+		      <0xf8800f20 0xa8>,
+		      <0xfc528000 0x2000>,
+		      <0xf8801000 0x7f000>;
+		reg-names = "dbi", "elbi", "parf", "config";
+		device_type = "pci";
+		linux,pci-domain = <1>;
+		bus-range = <0x00 0xff>;
+		num-lanes = <1>;
+		#address-cells = <3>;
+		#size-cells = <2>;
+		ranges = <0x81000000 0x0 0x0 0xf8880000 0x0 0x80000>,
+			 <0x82000000 0x0 0xf8900000 0xf8900000 0x0 0x700000>;
+
+		interrupts = <GIC_SPI 271 IRQ_TYPE_LEVEL_HIGH>;
+		interrupt-names = "msi";
+		#interrupt-cells = <1>;
+		interrupt-map-mask = <0 0 0 0x7>;
+		interrupt-map = <0 0 0 1 &intc GIC_SPI 272 IRQ_TYPE_LEVEL_HIGH>,
+				<0 0 0 2 &intc GIC_SPI 273 IRQ_TYPE_LEVEL_HIGH>,
+				<0 0 0 3 &intc GIC_SPI 274 IRQ_TYPE_LEVEL_HIGH>,
+				<0 0 0 4 &intc GIC_SPI 275 IRQ_TYPE_LEVEL_HIGH>;
+
+		clocks = <&gcc GCC_PCIE_1_PIPE_CLK>,
+			 <&gcc GCC_PCIE_1_CFG_AHB_CLK>,
+			 <&gcc GCC_PCIE_1_MSTR_AXI_CLK>,
+			 <&gcc GCC_PCIE_1_SLV_AXI_CLK>,
+			 <&gcc GCC_PCIE_1_AUX_CLK>;
+		clock-names = "pipe", "iface", "master_bus", "slave_bus", "aux";
+		power-domains = <&gcc PCIE_1_GDSC>;
+		vdda-supply = <&pm8994_l28>;
+
+		phys = <&pcie1_phy>;
+		phy-names = "pciephy";
+
+		perst-gpios = <&tlmm 35 GPIO_ACTIVE_LOW>;
+		wake-gpios = <&tlmm 37 GPIO_ACTIVE_HIGH>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&pcie1_default>;
+
+		qcom,scm-dev-id = <12>;
+	};
+#endif
+};
+
+/* Read-only PM8994 register dump (patch 0152) to check the LN_BB clock buffer */
+&spmi_bus {
+	pmic@0 {
+		op2-pmicdbg {
+			compatible = "oneplus,op2-pmicdbg";
+		};
 	};
 };

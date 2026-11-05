@@ -4,9 +4,9 @@
  	gpu_write(gpu, REG_A4XX_CP_ME_CNTL, 0);
  	pr_info("op2dbg: hw_init ME_CNTL cleared\n");
  
-+	/* mask all RBBM ints: AHB error irq path under test (s120 lockup) */
-+	gpu_write(gpu, REG_A4XX_RBBM_INT_0_MASK, 0);
-+	pr_info("op2dbg: hw_init INT_0_MASK=0 (irqs off)\n");
++	/* RBBM ints stay enabled: with them off the fences only retire from the hangcheck timer (0.5-1 s lag) */
++	gpu_write(gpu, REG_A4XX_RBBM_INT_0_MASK, A4XX_INT0_MASK);
++	pr_info("op2dbg: hw_init INT_0_MASK on (irqs enabled)\n");
 +
  	ret = a4xx_me_init(gpu) ? 0 : -EINVAL;
  	pr_info("op2dbg: a4xx_hw_init done ret=%d\n", ret);

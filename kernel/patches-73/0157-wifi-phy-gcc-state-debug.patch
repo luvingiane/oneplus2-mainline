@@ -1,0 +1,18 @@
+--- a/drivers/phy/qualcomm/phy-qcom-pcie-msm8994.c
++++ b/drivers/phy/qualcomm/phy-qcom-pcie-msm8994.c
+@@ -204,6 +204,16 @@
+ 
+ 	{
+ 		int i;
++		void __iomem *gcc = ioremap(0xfc401000, 0x2000);
++
++		if (gcc) {
++			/* op2 0157: GCC state while the PLL is waiting (PHY_LDO, BCRs, GDSC, aux/pipe/cfg clocks) */
++			dev_info(qphy->dev, "op2dbg gcc PHY_LDO(1e00)=%#x BCR_PHY(1b18)=%#x BCR_PIPE(1b14)=%#x GDSCR(1ac4)=%#x AUX(1ad0)=%#x CFG_AHB(1ad4)=%#x\n",
++				 readl(gcc + 0xe00), readl(gcc + 0xb18), readl(gcc + 0xb14),
++				 readl(gcc + 0xac4), readl(gcc + 0xad0), readl(gcc + 0xad4));
++			iounmap(gcc);
++		}
+ 		for (i = 0; i < 15; i++) {
+ 			dev_info(qphy->dev, "op2dbg phy t=%dms PCS=%#x VCOHIGH=%#x VCOTUNE=%#x RESETSM=%#x START=%#x PWRDN=%#x PLLCTRL=%#x\n",
+ 				 i*200, readl(qphy->base+0x728), readl(qphy->base+0x14c),

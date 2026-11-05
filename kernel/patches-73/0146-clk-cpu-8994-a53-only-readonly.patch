@@ -1,0 +1,252 @@
+From: Matt
+Subject: [PATCH] clk: qcom: clk-cpu-8994: A53 only, read-only by default (rw=1 to change clocks), progress messages
+
+The first version rewrote the PLL constants of the PLL the CPU was running from and
+touched the powered-off A57 cluster: A hung. Now only the A53 cluster is handled, the
+state is only logged unless clk_cpu_8994.rw=1, the cluster is moved to the aux clock
+before the PLL constants are rewritten, the QFPROM is not read read-only and the probe
+prints its progress. Read-only also leaves the PLL MODE alone (enable/disable do nothing):
+CLK_IS_CRITICAL made the framework enable the live A53 PLL when the clock was registered.
+A debug module parameter clk_cpu_8994.stage=N ends the probe early, rdmask picks the state
+registers read, muxoff the mux offset, muxscm=1 reads it through TrustZone, pdiv=N sets the PLL0
+post-divider and times a loop before/after (bisecting a bus hang, testing the CPU rate without the mux).
+---
+--- a/drivers/clk/qcom/clk-cpu-8994.c
++++ b/drivers/clk/qcom/clk-cpu-8994.c
+@@ -32,6 +32,7 @@
+ #include <linux/bitfield.h>
+ #include <linux/clk.h>
+ #include <linux/clk-provider.h>
++#include <linux/firmware/qcom/qcom_scm.h>
+ #include <linux/delay.h>
+ #include <linux/err.h>
+ #include <linux/io.h>
+@@ -78,6 +79,40 @@
+ #define PLL_8994_MAX_RATE	1996800000UL
+ 
+ /* Mux register offset from the cluster alias base */
++static bool cpuclk_rw;
++static int cpuclk_stage = 99;
++static unsigned int cpuclk_rdmask = 0x1f;
++static unsigned int cpuclk_muxoff = 0x54;
++static bool cpuclk_muxscm;
++static int cpuclk_pdiv = -1;
++module_param_named(pdiv, cpuclk_pdiv, int, 0444);
++MODULE_PARM_DESC(pdiv, "debug: PLL0 post-divider to set at probe (0 = /1, 1 = /2, 3 = /4), -1 = leave");
++
++static void cpuclk_bench(struct device *dev, const char *tag)
++{
++	unsigned long flags;
++	u64 t0, t1;
++	u32 i;
++
++	local_irq_save(flags);
++	t0 = ktime_get_ns();
++	for (i = 0; i < 20000000; i++)
++		barrier();
++	t1 = ktime_get_ns();
++	local_irq_restore(flags);
++	dev_info(dev, "bench %s: 20M loops in %llu us\n", tag, (t1 - t0) / 1000);
++}
++module_param_named(muxscm, cpuclk_muxscm, bool, 0444);
++MODULE_PARM_DESC(muxscm, "debug: read the mux through TrustZone (qcom_scm_io_readl) instead of directly");
++module_param_named(muxoff, cpuclk_muxoff, uint, 0444);
++MODULE_PARM_DESC(muxoff, "debug: offset of the mux register the probe reads");
++module_param_named(rdmask, cpuclk_rdmask, uint, 0444);
++MODULE_PARM_DESC(rdmask, "debug: which state registers the probe reads (1 mux, 2 pll0 mode, 4 L, 8 user ctl, 16 pll1 mode)");
++module_param_named(stage, cpuclk_stage, int, 0444);
++MODULE_PARM_DESC(stage, "debug: stop the probe after this step (0 start, 1 ioremap, 2 state read, 3 clocks registered)");
++module_param_named(rw, cpuclk_rw, bool, 0444);
++MODULE_PARM_DESC(rw, "allow clock changes (default: read-only, the state is only logged)");
++
+ #define MUX_8994_REG		0x54
+ #define MUX_8994_LF_SHIFT	1
+ #define MUX_8994_LF_MASK	GENMASK(2, 1)
+@@ -144,6 +179,10 @@
+ 	u32 mode;
+ 	int count;
+ 
++	/* read-only: the PLL the CPU runs from is already on, do not touch its MODE */
++	if (!cpuclk_rw)
++		return 0;
++
+ 	/* Disable bypass */
+ 	regmap_update_bits(regmap, pll->offset + PLL_8994_MODE,
+ 			   PLL_8994_BYPASSNL, PLL_8994_BYPASSNL);
+@@ -172,6 +211,9 @@
+ {
+ 	struct clk_cpu_8994_pll *pll = to_pll_8994(hw);
+ 
++	if (!cpuclk_rw)
++		return;
++
+ 	/* Output off, reset asserted, bypass on */
+ 	regmap_update_bits(pll->clkr.regmap, pll->offset + PLL_8994_MODE,
+ 			   PLL_8994_OUTCTRL | PLL_8994_RESET_N, 0);
+@@ -207,6 +249,9 @@
+ 	bool was_enabled = pll_8994_is_enabled(hw);
+ 	u32 l = rate / prate;
+ 
++	if (!cpuclk_rw)
++		return -EPERM;
++
+ 	/*
+ 	 * The 8994 PLL has no update latch (CAF variable_rate_pll_set_rate):
+ 	 * disable, write L, re-enable. The mux ping-pong guarantees the PLL
+@@ -315,6 +360,9 @@
+ 	u32 val, hf, lf;
+ 	int pll_idx = -1;
+ 
++	if (!cpuclk_rw)
++		return -EPERM;
++
+ 	switch (index) {
+ 	case P_XO:
+ 		hf = HF_LF_MUX; lf = LF_XO; break;
+@@ -572,7 +620,10 @@
+ 	static const char * const pll_names[2] = { "c0_pll", "c1_pll" };
+ 	static const char * const mux_names[2] = { "c0_mux", "c1_mux" };
+ 
+-	for (i = 0; i < 2; i++) {
++	dev_info(dev, "probe: start\n");
++	if (cpuclk_stage <= 0)
++		return -ENODEV;
++	for (i = 0; i < 1; i++) {
+ 		pll_maps[i] = devm_regmap_init_mmio(dev,
+ 			devm_platform_ioremap_resource_byname(pdev, pll_names[i]),
+ 			&clk_cpu_8994_regmap_config);
+@@ -586,21 +637,61 @@
+ 	}
+ 
+ 	efuse_base = devm_platform_ioremap_resource_byname(pdev, "efuse");
+-	if (!IS_ERR_OR_NULL(efuse_base))
++	if (cpuclk_rw && !IS_ERR_OR_NULL(efuse_base))	/* QFPROM is not read in read-only mode */
+ 		efuse = readl(efuse_base);
+ 	dev_info(dev, "A57 speed bin %u (efuse 0x%08x)\n", efuse & 0x7, efuse);
++	dev_info(dev, "probe: ioremap done\n");
++	if (cpuclk_stage <= 1)
++		return -ENODEV;
++
++	for (i = 0; i < 1; i++) {
++		u32 m0, l0, u0, m1;
++
++		m0 = l0 = u0 = m1 = 0;
++		if (cpuclk_rdmask & 1)
++		{
++			if (cpuclk_muxscm) {
++				int r = qcom_scm_io_readl(0xf900d000 + cpuclk_muxoff, &mux_val);
++
++				dev_info(dev, "mux via scm: %d val %#x\n", r, mux_val);
++			} else {
++				regmap_read(mux_maps[i], cpuclk_muxoff, &mux_val);
++			}
++		}
++		if (cpuclk_rdmask & 2)
++			regmap_read(pll_maps[i], 0x0, &m0);
++		if (cpuclk_rdmask & 4)
++			regmap_read(pll_maps[i], PLL_8994_L_VAL, &l0);
++		if (cpuclk_rdmask & 8)
++			regmap_read(pll_maps[i], PLL_8994_USER_CTL, &u0);
++		if (cpuclk_rdmask & 16)
++			regmap_read(pll_maps[i], 0x40, &m1);
++		if (cpuclk_pdiv >= 0) {
++			u32 u1;
++
++			cpuclk_bench(dev, "before");
++			regmap_update_bits(pll_maps[i], PLL_8994_USER_CTL, GENMASK(9, 8),
++					   (cpuclk_pdiv & 3) << 8);
++			mb();
++			udelay(20);
++			regmap_read(pll_maps[i], PLL_8994_USER_CTL, &u1);
++			dev_info(dev, "post-divider written, user ctl now %#x\n", u1);
++			cpuclk_bench(dev, "after");
++		}
++		dev_info(dev, "A53 state: mux %#x, pll0 mode %#x L %#x user %#x, pll1 mode %#x\n",
++			 mux_val, m0, l0, u0, m1);
+ 
+-	for (i = 0; i < 2; i++) {
+-		/* V2 PLL constants on both PLLs of the cluster */
+-		clk_cpu_8994_pll_init(pll_maps[i], 0x0);
+-		clk_cpu_8994_pll_init(pll_maps[i], 0x40);
+-
+-		/* Both clusters to the 600 MHz aux clock (CAF writes 0x6) */
+-		mux_val = FIELD_PREP(MUX_8994_HF_MASK, HF_LF_MUX) |
+-			  FIELD_PREP(MUX_8994_LF_MASK, LF_AUX);
+-		regmap_write(mux_maps[i], MUX_8994_REG, mux_val);
+-		mb();
+-		udelay(5);
++		if (cpuclk_rw) {
++			/* first move the cluster to the aux clock, only then rewrite the PLL constants */
++			mux_val = (mux_val & ~(MUX_8994_HF_MASK | MUX_8994_LF_MASK)) |
++				  FIELD_PREP(MUX_8994_HF_MASK, HF_LF_MUX) |
++				  FIELD_PREP(MUX_8994_LF_MASK, LF_AUX);
++			regmap_write(mux_maps[i], MUX_8994_REG, mux_val);
++			mb();
++			udelay(5);
++			clk_cpu_8994_pll_init(pll_maps[i], 0x0);
++			clk_cpu_8994_pll_init(pll_maps[i], 0x40);
++		}
+ 
+ 		cpuclks[i]->pll_regmap = pll_maps[i];
+ 		cpuclks[i]->clkr.regmap = mux_maps[i];
+@@ -612,8 +703,12 @@
+ 		plls[i][1]->clkr.regmap = pll_maps[i];
+ 	}
+ 
+-	for (i = 0; i < ARRAY_SIZE(clk_cpu_8994_clks); i++) {
++	dev_info(dev, "probe: state read, registering clocks\n");
++	if (cpuclk_stage <= 2)
++		return -ENODEV;
++	for (i = 0; i < 3; i++) {	/* the A53 PLLs and CPU clock only */
+ 		ret = devm_clk_register_regmap(dev, clk_cpu_8994_clks[i]);
++		dev_info(dev, "probe: clock %d registered (%d)\n", i, ret);
+ 		if (ret)
+ 			return ret;
+ 	}
+@@ -623,28 +718,31 @@
+ 		return -ENOMEM;
+ 	data->num = 2;
+ 	data->hws[CLK_8994_A53] = &a53_cpuclk.clkr.hw;
+-	data->hws[CLK_8994_A57] = &a57_cpuclk.clkr.hw;
++	data->hws[CLK_8994_A57] = ERR_PTR(-ENODEV);	/* A57 cluster not brought online */
+ 
++	dev_info(dev, "probe: adding provider\n");
++	if (cpuclk_stage <= 3)
++		return -ENODEV;
+ 	ret = devm_of_clk_add_hw_provider(dev, of_clk_hw_onecell_get, data);
+ 	if (ret)
+ 		return ret;
+ 
+-	/* Bring both PLLs of both clusters up at the minimum VCO rate */
+-	for (i = 0; i < 2; i++)
+-		for (j = 0; j < 2; j++) {
+-			ret = clk_prepare_enable(plls[i][j]->clkr.hw.clk);
+-			if (ret)
+-				return ret;
+-			clk_set_rate(plls[i][j]->clkr.hw.clk, PLL_8994_MIN_RATE);
+-		}
++	if (!cpuclk_rw) {
++		dev_info(dev, "read-only (clk_cpu_8994.rw=0): no clock changed\n");
++		return 0;
++	}
+ 
+-	/* Boot rates: A53 600 MHz (aux), A57 384 MHz (pll1 @ 1536 MHz / 4) */
+-	clk_set_rate(a53_cpuclk.clkr.hw.clk, A53_BOOT_RATE);
+-	clk_set_rate(a57_cpuclk.clkr.hw.clk, A57_BOOT_RATE);
++	/* Bring the two A53 PLLs up at the minimum VCO rate */
++	for (j = 0; j < 2; j++) {
++		ret = clk_prepare_enable(plls[0][j]->clkr.hw.clk);
++		if (ret)
++			return ret;
++		clk_set_rate(plls[0][j]->clkr.hw.clk, PLL_8994_MIN_RATE);
++	}
+ 
+-	dev_info(dev, "a53_clk %lu Hz, a57_clk %lu Hz\n",
+-		 clk_get_rate(a53_cpuclk.clkr.hw.clk),
+-		 clk_get_rate(a57_cpuclk.clkr.hw.clk));
++	/* Boot rate: A53 600 MHz (aux) */
++	clk_set_rate(a53_cpuclk.clkr.hw.clk, A53_BOOT_RATE);
++	dev_info(dev, "a53_clk %lu Hz\n", clk_get_rate(a53_cpuclk.clkr.hw.clk));
+ 	return 0;
+ }
+ 

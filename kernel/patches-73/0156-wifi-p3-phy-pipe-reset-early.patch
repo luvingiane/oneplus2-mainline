@@ -1,0 +1,40 @@
+diff -u a/drivers/phy/qualcomm/phy-qcom-pcie-msm8994.c b/drivers/phy/qualcomm/phy-qcom-pcie-msm8994.c
+--- a/drivers/phy/qualcomm/phy-qcom-pcie-msm8994.c
++++ b/drivers/phy/qualcomm/phy-qcom-pcie-msm8994.c
+@@ -153,6 +153,11 @@
+ MODULE_PARM_DESC(op2_pcie_pwrdn01,
+ 	"op2 273-01: after the init table also write PWRDN=0x01/START=0x03 (patch 0137); default 0 keeps the CAF final value PWRDN=0x03 (CAF pci-msm.c:973)");
+ 
++static bool op2_pcie_pipe_rst_early;
++module_param_named(op2_pcie_pipe_rst_early, op2_pcie_pipe_rst_early, bool, 0644);
++MODULE_PARM_DESC(op2_pcie_pipe_rst_early,
++	"op2 304: deassert the pipe-side PHY BCR (GCC 0x1B14, reset 'pipe') BEFORE the init table instead of after it; default 0 keeps the current order (CAF deasserts it after pcie_phy_init, pci-msm.c:3306-3314)");
++
+ static int msm8994_pcie_phy_power_on(struct phy *phy)
+ {
+ 	struct msm8994_pcie_phy *qphy = phy_get_drvdata(phy);
+@@ -163,6 +168,9 @@
+ 	u32 val;
+ 	int ret;
+ 
++	if (op2_pcie_pipe_rst_early && qphy->pipe_reset)
++		reset_control_deassert(qphy->pipe_reset);
++
+ 	for (i = 0; i < ARRAY_SIZE(msm8994_pcie_phy_tbl); i++)
+ 		writel(msm8994_pcie_phy_tbl[i].val,
+ 		       qphy->base + msm8994_pcie_phy_tbl[i].reg);
+@@ -186,8 +194,10 @@
+ 	 * reset (GCC PCIE_PHY_0_PHY_BCR) right before the pipe clock; the
+ 	 * boot leaves it asserted, and then the PLL never starts.
+ 	 */
+-	ret = reset_control_deassert(qphy->pipe_reset);
+-	if (ret)
+-		return ret;
++	if (!op2_pcie_pipe_rst_early) {
++		ret = reset_control_deassert(qphy->pipe_reset);
++		if (ret)
++			return ret;
++	}
+ 	ret = clk_set_rate(qphy->pipe_clk, 125000000);
+ 	if (ret)
+ 		dev_warn(qphy->dev, "pipe clock rate: %d\n", ret);

@@ -1,0 +1,692 @@
+--- a/drivers/clk/qcom/clk-cpu-8994.c
++++ b/drivers/clk/qcom/clk-cpu-8994.c
+@@ -0,0 +1,661 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Qualcomm MSM8994 CPU cluster clock controller (APCS alias PLLs + muxes).
++ *
++ * Mainline port of the V2 clock tree of the CAF 3.10 driver
++ * drivers/clk/qcom/clock-cpu-8994.c (MSM8994 v2.x silicon, e.g. OnePlus 2).
++ *
++ * Each cluster (A53 = cluster 0, A57 = cluster 1) has:
++ *  - two "alpha" PLLs at its PLL base (pll0 @ +0x00, pll1 @ +0x40), parent
++ *    XO (19.2 MHz), output = XO * L (L_VAL register);
++ *  - one mux register (offset 0x54) at the cluster "alias" base with two
++ *    2-bit selectors: LF mux at bits [2:1] (0=xo, 1=pll1/div, 2=pll0/div,
++ *    3=aux 600 MHz) and HF mux at bits [4:3] (0=lf mux, 1=pll1, 3=pll0).
++ * The PLL post-divider lives in the PLL USER_CTL register bits [9:8]
++ * (0=/1, 1=/2, 3=/4), so the CPU rate is pll0/pll1 possibly divided.
++ *
++ * Register map (CAF clock-cpu-8994.c):
++ *  - c0_pll 0xf9015000 (A53), c1_pll 0xf9016000 (A57):
++ *      MODE 0x0 (OUTCTRL b0, BYPASSNL b1, RESET_N b2, LOCK_DET b31),
++ *      L_VAL 0x4, ALPHA 0x8, USER_CTL 0x10, CONFIG_CTL 0x14,
++ *      STATUS 0x1c, TEST_CTL 0x20, TEST_CTL_U 0x24; pll1 at +0x40.
++ *  - c0_mux 0xf900d000 (A53), c1_mux 0xf900f000 (A57): mux register at +0x54.
++ *  - efuse 0xfc4b80b0: A57 speed bin = bits [2:0] (V2).
++ *
++ * Frequency switching follows the CAF ping-pong scheme: the PLL that is
++ * NOT the current CPU source is reprogrammed first (the CCF changes the
++ * parent rate before calling set_parent on the mux), then the mux is
++ * switched. The 8994 PLLs have no update latch, so a PLL is disabled,
++ * reprogrammed (L_VAL) and re-enabled while not in use.
++ */
++
++#include <linux/bitfield.h>
++#include <linux/clk.h>
++#include <linux/clk-provider.h>
++#include <linux/delay.h>
++#include <linux/err.h>
++#include <linux/io.h>
++#include <linux/kernel.h>
++#include <linux/module.h>
++#include <linux/mutex.h>
++#include <linux/of.h>
++#include <linux/platform_device.h>
++#include <linux/regmap.h>
++#include <linux/slab.h>
++
++#include "clk-regmap.h"
++
++/* PLL register offsets, added to pll->offset */
++#define PLL_8994_MODE		0x0
++#define PLL_8994_L_VAL		0x4
++#define PLL_8994_ALPHA_VAL	0x8
++#define PLL_8994_USER_CTL	0x10
++#define PLL_8994_CONFIG_CTL	0x14
++#define PLL_8994_STATUS		0x1c
++#define PLL_8994_TEST_CTL	0x20
++#define PLL_8994_TEST_CTL_U	0x24
++
++#define PLL_8994_OUTCTRL	BIT(0)
++#define PLL_8994_BYPASSNL	BIT(1)
++#define PLL_8994_RESET_N	BIT(2)
++#define PLL_8994_LOCK_DET	BIT(31)
++
++/* USER_CTL post-divider: bits [9:8], encoding 0=/1, 1=/2, 3=/4 */
++#define PLL_8994_POST_DIV_SHIFT	8
++#define PLL_8994_POST_DIV_MASK	GENMASK(9, 8)
++#define PLL_8994_POST_DIV_1	0
++#define PLL_8994_POST_DIV_2	1
++#define PLL_8994_POST_DIV_4	3
++
++/* V2 silicon PLL constant values (CAF init_v2_data()/cpu_clock_8994_init_a57_v2()) */
++#define PLL_8994_V2_CONFIG_CTL	0x004d6968
++#define PLL_8994_V2_TEST_CTL	0x80000000
++#define PLL_8994_V2_TEST_CTL_U	0x00000001
++#define PLL_8994_V2_USER_CTL	0x109	/* main out | early out | post_div /2 */
++
++/* PLL VCO range (CAF min_rate/max_rate) */
++#define PLL_8994_MIN_RATE	1209600000UL
++#define PLL_8994_MAX_RATE	1996800000UL
++
++/* Mux register offset from the cluster alias base */
++#define MUX_8994_REG		0x54
++#define MUX_8994_LF_SHIFT	1
++#define MUX_8994_LF_MASK	GENMASK(2, 1)
++#define MUX_8994_HF_SHIFT	3
++#define MUX_8994_HF_MASK	GENMASK(4, 3)
++
++/* LF mux selectors (V2) */
++#define LF_XO			0
++#define LF_PLL1_DIV		1
++#define LF_PLL0_DIV		2
++#define LF_AUX			3
++/* HF mux selectors (V2) */
++#define HF_LF_MUX		0
++#define HF_PLL1			1
++#define HF_PLL0			3
++
++/* AUX clock (GPLL0) is 600 MHz on MSM8994 */
++#define AUX_8994_RATE		600000000UL
++
++/* Boot rates (CAF V2 probe: a53 600 MHz via aux, a57 384 MHz via pll1/4) */
++#define A53_BOOT_RATE		600000000UL
++#define A57_BOOT_RATE		384000000UL
++
++#define CLK_8994_A53		0
++#define CLK_8994_A57		1
++
++struct clk_cpu_8994_pll {
++	u32 offset;
++	struct clk_regmap clkr;
++};
++
++struct clk_cpu_8994 {
++	u32 mux_reg;
++	u32 chosen_div;		/* div picked by determine_rate, applied in set_parent */
++	struct regmap *pll_regmap;
++	struct clk_hw *pll_hws[2];	/* [0] = pll0, [1] = pll1 */
++	struct mutex lock;
++	struct clk_regmap clkr;
++};
++
++static inline struct clk_cpu_8994_pll *to_pll_8994(struct clk_hw *hw)
++{
++	return container_of(to_clk_regmap(hw), struct clk_cpu_8994_pll, clkr);
++}
++
++static inline struct clk_cpu_8994 *to_cpuclk_8994(struct clk_hw *hw)
++{
++	return container_of(to_clk_regmap(hw), struct clk_cpu_8994, clkr);
++}
++
++static int pll_8994_is_enabled(struct clk_hw *hw)
++{
++	struct clk_cpu_8994_pll *pll = to_pll_8994(hw);
++	u32 mode;
++
++	regmap_read(pll->clkr.regmap, pll->offset + PLL_8994_MODE, &mode);
++	return !!(mode & PLL_8994_LOCK_DET);
++}
++
++static int pll_8994_enable(struct clk_hw *hw)
++{
++	struct clk_cpu_8994_pll *pll = to_pll_8994(hw);
++	struct regmap *regmap = pll->clkr.regmap;
++	u32 mode;
++	int count;
++
++	/* Disable bypass */
++	regmap_update_bits(regmap, pll->offset + PLL_8994_MODE,
++			   PLL_8994_BYPASSNL, PLL_8994_BYPASSNL);
++	/* H/W requires 5us between bypass and reset de-assert; use 10us */
++	udelay(10);
++	regmap_update_bits(regmap, pll->offset + PLL_8994_MODE,
++			   PLL_8994_RESET_N, PLL_8994_RESET_N);
++
++	/* Wait for lock (LOCK_DET, bit 31 of MODE) */
++	for (count = 100; count > 0; count--) {
++		regmap_read(regmap, pll->offset + PLL_8994_MODE, &mode);
++		if (mode & PLL_8994_LOCK_DET)
++			break;
++		udelay(1);
++	}
++	if (!(mode & PLL_8994_LOCK_DET))
++		return -ETIMEDOUT;
++
++	/* Enable output */
++	regmap_update_bits(regmap, pll->offset + PLL_8994_MODE,
++			   PLL_8994_OUTCTRL, PLL_8994_OUTCTRL);
++	return 0;
++}
++
++static void pll_8994_disable(struct clk_hw *hw)
++{
++	struct clk_cpu_8994_pll *pll = to_pll_8994(hw);
++
++	/* Output off, reset asserted, bypass on */
++	regmap_update_bits(pll->clkr.regmap, pll->offset + PLL_8994_MODE,
++			   PLL_8994_OUTCTRL | PLL_8994_RESET_N, 0);
++	regmap_update_bits(pll->clkr.regmap, pll->offset + PLL_8994_MODE,
++			   PLL_8994_BYPASSNL, PLL_8994_BYPASSNL);
++}
++
++static unsigned long pll_8994_recalc_rate(struct clk_hw *hw,
++					  unsigned long parent_rate)
++{
++	struct clk_cpu_8994_pll *pll = to_pll_8994(hw);
++	u32 l;
++
++	regmap_read(pll->clkr.regmap, pll->offset + PLL_8994_L_VAL, &l);
++	return l * parent_rate;
++}
++
++static int pll_8994_determine_rate(struct clk_hw *hw,
++				    struct clk_rate_request *req)
++{
++	unsigned long l = DIV_ROUND_CLOSEST(req->rate, req->best_parent_rate);
++
++	l = clamp(l, PLL_8994_MIN_RATE / req->best_parent_rate,
++		  PLL_8994_MAX_RATE / req->best_parent_rate);
++	req->rate = l * req->best_parent_rate;
++	return 0;
++}
++
++static int pll_8994_set_rate(struct clk_hw *hw, unsigned long rate,
++			     unsigned long prate)
++{
++	struct clk_cpu_8994_pll *pll = to_pll_8994(hw);
++	bool was_enabled = pll_8994_is_enabled(hw);
++	u32 l = rate / prate;
++
++	/*
++	 * The 8994 PLL has no update latch (CAF variable_rate_pll_set_rate):
++	 * disable, write L, re-enable. The mux ping-pong guarantees the PLL
++	 * being reprogrammed is not the current CPU clock source.
++	 */
++	if (was_enabled)
++		pll_8994_disable(hw);
++
++	regmap_write(pll->clkr.regmap, pll->offset + PLL_8994_L_VAL, l);
++	regmap_write(pll->clkr.regmap, pll->offset + PLL_8994_ALPHA_VAL, 0);
++
++	if (was_enabled)
++		return pll_8994_enable(hw);
++	return 0;
++}
++
++static const struct clk_ops pll_8994_ops = {
++	.enable = pll_8994_enable,
++	.disable = pll_8994_disable,
++	.prepare = pll_8994_enable,
++	.unprepare = pll_8994_disable,
++	.is_enabled = pll_8994_is_enabled,
++	.recalc_rate = pll_8994_recalc_rate,
++	.determine_rate = pll_8994_determine_rate,
++	.set_rate = pll_8994_set_rate,
++};
++
++/*
++ * Cluster CPU clock. Flattened parent list:
++ *   0 = xo, 1 = aux (600 MHz), 2 = pll0, 3 = pll1
++ * The post-divider of the selected PLL (chosen_div) decides whether the
++ * mux is switched to the PLL directly (div 1, HF mux) or through the
++ * LF mux (div 2/4).
++ */
++enum {
++	P_XO = 0,
++	P_AUX,
++	P_PLL0,
++	P_PLL1,
++	P_NUM
++};
++
++static u32 pll_8994_get_div(struct clk_cpu_8994 *cpuclk, int pll_idx)
++{
++	u32 val, bits;
++
++	regmap_read(cpuclk->pll_regmap,
++		    (pll_idx == 1 ? 0x40 : 0x0) + PLL_8994_USER_CTL, &val);
++	bits = FIELD_GET(PLL_8994_POST_DIV_MASK, val);
++	if (bits == PLL_8994_POST_DIV_2)
++		return 2;
++	if (bits == PLL_8994_POST_DIV_4)
++		return 4;
++	return 1;
++}
++
++static void pll_8994_set_div(struct clk_cpu_8994 *cpuclk, int pll_idx, u32 div)
++{
++	u32 bits;
++
++	switch (div) {
++	case 2:
++		bits = PLL_8994_POST_DIV_2; break;
++	case 4:
++		bits = PLL_8994_POST_DIV_4; break;
++	default:
++		bits = PLL_8994_POST_DIV_1; break;
++	}
++	regmap_update_bits(cpuclk->pll_regmap,
++			   (pll_idx == 1 ? 0x40 : 0x0) + PLL_8994_USER_CTL,
++			   PLL_8994_POST_DIV_MASK,
++			   FIELD_PREP(PLL_8994_POST_DIV_MASK, bits));
++}
++
++static u8 clk_cpu_8994_get_parent(struct clk_hw *hw)
++{
++	struct clk_cpu_8994 *cpuclk = to_cpuclk_8994(hw);
++	u32 val, hf, lf;
++
++	regmap_read(cpuclk->clkr.regmap, cpuclk->mux_reg, &val);
++	hf = FIELD_GET(MUX_8994_HF_MASK, val);
++	lf = FIELD_GET(MUX_8994_LF_MASK, val);
++
++	switch (hf) {
++	case HF_PLL0:
++		return P_PLL0;
++	case HF_PLL1:
++		return P_PLL1;
++	default:
++		switch (lf) {
++		case LF_PLL0_DIV:
++			return P_PLL0;
++		case LF_PLL1_DIV:
++			return P_PLL1;
++		case LF_AUX:
++			return P_AUX;
++		default:
++			return P_XO;
++		}
++	}
++}
++
++static int clk_cpu_8994_set_parent(struct clk_hw *hw, u8 index)
++{
++	struct clk_cpu_8994 *cpuclk = to_cpuclk_8994(hw);
++	u32 val, hf, lf;
++	int pll_idx = -1;
++
++	switch (index) {
++	case P_XO:
++		hf = HF_LF_MUX; lf = LF_XO; break;
++	case P_AUX:
++		hf = HF_LF_MUX; lf = LF_AUX; break;
++	case P_PLL0:
++		pll_idx = 0; break;
++	case P_PLL1:
++		pll_idx = 1; break;
++	default:
++		return -EINVAL;
++	}
++
++	if (pll_idx >= 0) {
++		if (cpuclk->chosen_div == 1) {
++			hf = pll_idx == 0 ? HF_PLL0 : HF_PLL1;
++			lf = LF_AUX;
++		} else {
++			hf = HF_LF_MUX;
++			lf = pll_idx == 0 ? LF_PLL0_DIV : LF_PLL1_DIV;
++		}
++	}
++
++	mutex_lock(&cpuclk->lock);
++
++	/* Program the post-divider of the target PLL before switching to it */
++	if (pll_idx >= 0)
++		pll_8994_set_div(cpuclk, pll_idx, cpuclk->chosen_div);
++
++	regmap_read(cpuclk->clkr.regmap, cpuclk->mux_reg, &val);
++	val &= ~(MUX_8994_HF_MASK | MUX_8994_LF_MASK);
++	val |= FIELD_PREP(MUX_8994_HF_MASK, hf) | FIELD_PREP(MUX_8994_LF_MASK, lf);
++	regmap_write(cpuclk->clkr.regmap, cpuclk->mux_reg, val);
++
++	/* Ensure the switch goes through; hardware mandated 5us delay */
++	mb();
++	udelay(5);
++
++	mutex_unlock(&cpuclk->lock);
++	return 0;
++}
++
++static int clk_cpu_8994_determine_rate(struct clk_hw *hw,
++				       struct clk_rate_request *req)
++{
++	struct clk_cpu_8994 *cpuclk = to_cpuclk_8994(hw);
++	u32 val, hf, lf, div;
++	unsigned long pll_rate;
++	int in_use;	/* 0 = pll0 in use, 1 = pll1 in use, -1 = none */
++
++	regmap_read(cpuclk->clkr.regmap, cpuclk->mux_reg, &val);
++	hf = FIELD_GET(MUX_8994_HF_MASK, val);
++	lf = FIELD_GET(MUX_8994_LF_MASK, val);
++	if (hf == HF_PLL0 || (hf == HF_LF_MUX && lf == LF_PLL0_DIV))
++		in_use = 0;
++	else if (hf == HF_PLL1 || (hf == HF_LF_MUX && lf == LF_PLL1_DIV))
++		in_use = 1;
++	else
++		in_use = -1;
++
++	/*
++	 * Ping-pong: reprogram the PLL that is NOT the current CPU source.
++	 */
++	if (req->rate >= PLL_8994_MIN_RATE) {
++		div = 1;
++		pll_rate = req->rate;
++	} else if (req->rate * 2 >= PLL_8994_MIN_RATE &&
++		   req->rate * 2 <= PLL_8994_MAX_RATE) {
++		div = 2;
++		pll_rate = req->rate * 2;
++	} else if (req->rate * 4 >= PLL_8994_MIN_RATE &&
++		   req->rate * 4 <= PLL_8994_MAX_RATE) {
++		div = 4;
++		pll_rate = req->rate * 4;
++	} else {
++		/* Low rates (and exactly 600 MHz): use the 600 MHz aux clock */
++		struct clk_hw *aux = clk_hw_get_parent_by_index(hw, P_AUX);
++
++		req->best_parent_hw = aux;
++		req->best_parent_rate = AUX_8994_RATE;
++		req->rate = AUX_8994_RATE;
++		cpuclk->chosen_div = 1;
++		return 0;
++	}
++
++	req->best_parent_hw = cpuclk->pll_hws[in_use == 0 ? 1 : 0];
++	req->best_parent_rate = pll_rate;
++	req->rate = pll_rate / div;
++	cpuclk->chosen_div = div;
++	return 0;
++}
++
++static unsigned long clk_cpu_8994_recalc_rate(struct clk_hw *hw,
++					      unsigned long parent_rate)
++{
++	struct clk_cpu_8994 *cpuclk = to_cpuclk_8994(hw);
++	u32 val, hf, lf;
++	int pll_idx;
++
++	regmap_read(cpuclk->clkr.regmap, cpuclk->mux_reg, &val);
++	hf = FIELD_GET(MUX_8994_HF_MASK, val);
++	lf = FIELD_GET(MUX_8994_LF_MASK, val);
++
++	if (hf == HF_PLL0 || (hf == HF_LF_MUX && lf == LF_PLL0_DIV))
++		pll_idx = 0;
++	else if (hf == HF_PLL1 || (hf == HF_LF_MUX && lf == LF_PLL1_DIV))
++		pll_idx = 1;
++	else if (hf == HF_LF_MUX && lf == LF_AUX)
++		return clk_hw_get_rate(clk_hw_get_parent_by_index(hw, P_AUX));
++	else
++		return clk_hw_get_rate(clk_hw_get_parent_by_index(hw, P_XO));
++
++	if (hf == HF_LF_MUX)
++		return clk_hw_get_rate(cpuclk->pll_hws[pll_idx]) /
++		       pll_8994_get_div(cpuclk, pll_idx);
++	return clk_hw_get_rate(cpuclk->pll_hws[pll_idx]);
++}
++
++static int clk_cpu_8994_is_enabled(struct clk_hw *hw)
++{
++	return 1;
++}
++
++static const struct clk_ops clk_cpu_8994_ops = {
++	.determine_rate = clk_cpu_8994_determine_rate,
++	.set_parent = clk_cpu_8994_set_parent,
++	.get_parent = clk_cpu_8994_get_parent,
++	.recalc_rate = clk_cpu_8994_recalc_rate,
++	.is_enabled = clk_cpu_8994_is_enabled,
++};
++
++static const struct regmap_config clk_cpu_8994_regmap_config = {
++	.reg_bits = 32,
++	.reg_stride = 4,
++	.val_bits = 32,
++	.max_register = 0x1000,
++	.fast_io = true,
++};
++
++static const struct clk_parent_data pll_8994_parent[] = {
++	{ .fw_name = "xo" },
++};
++
++static struct clk_cpu_8994_pll a53_pll0 = {
++	.offset = 0x0,
++	.clkr.hw.init = &(struct clk_init_data){
++		.name = "a53_pll0",
++		.parent_data = pll_8994_parent,
++		.num_parents = ARRAY_SIZE(pll_8994_parent),
++		.ops = &pll_8994_ops,
++	},
++};
++
++static struct clk_cpu_8994_pll a53_pll1 = {
++	.offset = 0x40,
++	.clkr.hw.init = &(struct clk_init_data){
++		.name = "a53_pll1",
++		.parent_data = pll_8994_parent,
++		.num_parents = ARRAY_SIZE(pll_8994_parent),
++		.ops = &pll_8994_ops,
++	},
++};
++
++static struct clk_cpu_8994_pll a57_pll0 = {
++	.offset = 0x0,
++	.clkr.hw.init = &(struct clk_init_data){
++		.name = "a57_pll0",
++		.parent_data = pll_8994_parent,
++		.num_parents = ARRAY_SIZE(pll_8994_parent),
++		.ops = &pll_8994_ops,
++	},
++};
++
++static struct clk_cpu_8994_pll a57_pll1 = {
++	.offset = 0x40,
++	.clkr.hw.init = &(struct clk_init_data){
++		.name = "a57_pll1",
++		.parent_data = pll_8994_parent,
++		.num_parents = ARRAY_SIZE(pll_8994_parent),
++		.ops = &pll_8994_ops,
++	},
++};
++
++static const struct clk_parent_data a53_cpu_parents[P_NUM] = {
++	[P_XO]		= { .fw_name = "xo" },
++	[P_AUX]		= { .fw_name = "aux" },
++	[P_PLL0]	= { .hw = &a53_pll0.clkr.hw },
++	[P_PLL1]	= { .hw = &a53_pll1.clkr.hw },
++};
++
++static const struct clk_parent_data a57_cpu_parents[P_NUM] = {
++	[P_XO]		= { .fw_name = "xo" },
++	[P_AUX]		= { .fw_name = "aux" },
++	[P_PLL0]	= { .hw = &a57_pll0.clkr.hw },
++	[P_PLL1]	= { .hw = &a57_pll1.clkr.hw },
++};
++
++static struct clk_cpu_8994 a53_cpuclk = {
++	.mux_reg = MUX_8994_REG,
++	.chosen_div = 1,
++	.clkr.hw.init = &(struct clk_init_data){
++		.name = "a53_clk",
++		.parent_data = a53_cpu_parents,
++		.num_parents = P_NUM,
++		.ops = &clk_cpu_8994_ops,
++		.flags = CLK_SET_RATE_PARENT | CLK_IS_CRITICAL,
++	},
++};
++
++static struct clk_cpu_8994 a57_cpuclk = {
++	.mux_reg = MUX_8994_REG,
++	.chosen_div = 1,
++	.clkr.hw.init = &(struct clk_init_data){
++		.name = "a57_clk",
++		.parent_data = a57_cpu_parents,
++		.num_parents = P_NUM,
++		.ops = &clk_cpu_8994_ops,
++		.flags = CLK_SET_RATE_PARENT | CLK_IS_CRITICAL,
++	},
++};
++
++static struct clk_regmap *clk_cpu_8994_clks[] = {
++	&a53_pll0.clkr, &a53_pll1.clkr, &a53_cpuclk.clkr,
++	&a57_pll0.clkr, &a57_pll1.clkr, &a57_cpuclk.clkr,
++};
++
++static const struct of_device_id clk_cpu_8994_match[] = {
++	{ .compatible = "qcom,cpu-clock-8994" },
++	{ .compatible = "qcom,cpu-clock-8994-v2" },
++	{ /* sentinel */ }
++};
++MODULE_DEVICE_TABLE(of, clk_cpu_8994_match);
++
++static void clk_cpu_8994_pll_init(struct regmap *regmap, u32 offset)
++{
++	regmap_write(regmap, offset + PLL_8994_CONFIG_CTL, PLL_8994_V2_CONFIG_CTL);
++	regmap_write(regmap, offset + PLL_8994_TEST_CTL, PLL_8994_V2_TEST_CTL);
++	regmap_write(regmap, offset + PLL_8994_TEST_CTL_U, PLL_8994_V2_TEST_CTL_U);
++	regmap_write(regmap, offset + PLL_8994_USER_CTL, PLL_8994_V2_USER_CTL);
++}
++
++static int clk_cpu_8994_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct clk_hw_onecell_data *data;
++	struct regmap *pll_maps[2], *mux_maps[2];
++	void __iomem *efuse_base;
++	struct clk_cpu_8994 *cpuclks[2] = { &a53_cpuclk, &a57_cpuclk };
++	struct clk_cpu_8994_pll *plls[2][2] = {
++		{ &a53_pll0, &a53_pll1 }, { &a57_pll0, &a57_pll1 }
++	};
++	u32 mux_val, efuse = 0;
++	int i, j, ret;
++
++	static const char * const pll_names[2] = { "c0_pll", "c1_pll" };
++	static const char * const mux_names[2] = { "c0_mux", "c1_mux" };
++
++	for (i = 0; i < 2; i++) {
++		pll_maps[i] = devm_regmap_init_mmio(dev,
++			devm_platform_ioremap_resource_byname(pdev, pll_names[i]),
++			&clk_cpu_8994_regmap_config);
++		if (IS_ERR(pll_maps[i]))
++			return PTR_ERR(pll_maps[i]);
++		mux_maps[i] = devm_regmap_init_mmio(dev,
++			devm_platform_ioremap_resource_byname(pdev, mux_names[i]),
++			&clk_cpu_8994_regmap_config);
++		if (IS_ERR(mux_maps[i]))
++			return PTR_ERR(mux_maps[i]);
++	}
++
++	efuse_base = devm_platform_ioremap_resource_byname(pdev, "efuse");
++	if (!IS_ERR_OR_NULL(efuse_base))
++		efuse = readl(efuse_base);
++	dev_info(dev, "A57 speed bin %u (efuse 0x%08x)\n", efuse & 0x7, efuse);
++
++	for (i = 0; i < 2; i++) {
++		/* V2 PLL constants on both PLLs of the cluster */
++		clk_cpu_8994_pll_init(pll_maps[i], 0x0);
++		clk_cpu_8994_pll_init(pll_maps[i], 0x40);
++
++		/* Both clusters to the 600 MHz aux clock (CAF writes 0x6) */
++		mux_val = FIELD_PREP(MUX_8994_HF_MASK, HF_LF_MUX) |
++			  FIELD_PREP(MUX_8994_LF_MASK, LF_AUX);
++		regmap_write(mux_maps[i], MUX_8994_REG, mux_val);
++		mb();
++		udelay(5);
++
++		cpuclks[i]->pll_regmap = pll_maps[i];
++		cpuclks[i]->clkr.regmap = mux_maps[i];
++		cpuclks[i]->pll_hws[0] = &plls[i][0]->clkr.hw;
++		cpuclks[i]->pll_hws[1] = &plls[i][1]->clkr.hw;
++		mutex_init(&cpuclks[i]->lock);
++
++		plls[i][0]->clkr.regmap = pll_maps[i];
++		plls[i][1]->clkr.regmap = pll_maps[i];
++	}
++
++	for (i = 0; i < ARRAY_SIZE(clk_cpu_8994_clks); i++) {
++		ret = devm_clk_register_regmap(dev, clk_cpu_8994_clks[i]);
++		if (ret)
++			return ret;
++	}
++
++	data = devm_kzalloc(dev, struct_size(data, hws, 2), GFP_KERNEL);
++	if (!data)
++		return -ENOMEM;
++	data->num = 2;
++	data->hws[CLK_8994_A53] = &a53_cpuclk.clkr.hw;
++	data->hws[CLK_8994_A57] = &a57_cpuclk.clkr.hw;
++
++	ret = devm_of_clk_add_hw_provider(dev, of_clk_hw_onecell_get, data);
++	if (ret)
++		return ret;
++
++	/* Bring both PLLs of both clusters up at the minimum VCO rate */
++	for (i = 0; i < 2; i++)
++		for (j = 0; j < 2; j++) {
++			ret = clk_prepare_enable(plls[i][j]->clkr.hw.clk);
++			if (ret)
++				return ret;
++			clk_set_rate(plls[i][j]->clkr.hw.clk, PLL_8994_MIN_RATE);
++		}
++
++	/* Boot rates: A53 600 MHz (aux), A57 384 MHz (pll1 @ 1536 MHz / 4) */
++	clk_set_rate(a53_cpuclk.clkr.hw.clk, A53_BOOT_RATE);
++	clk_set_rate(a57_cpuclk.clkr.hw.clk, A57_BOOT_RATE);
++
++	dev_info(dev, "a53_clk %lu Hz, a57_clk %lu Hz\n",
++		 clk_get_rate(a53_cpuclk.clkr.hw.clk),
++		 clk_get_rate(a57_cpuclk.clkr.hw.clk));
++	return 0;
++}
++
++static struct platform_driver clk_cpu_8994_driver = {
++	.probe = clk_cpu_8994_probe,
++	.driver = {
++		.name = "qcom-cpu-clock-8994",
++		.of_match_table = clk_cpu_8994_match,
++	},
++};
++module_platform_driver(clk_cpu_8994_driver);
++
++MODULE_DESCRIPTION("QCOM MSM8994 CPU cluster clock driver");
++MODULE_LICENSE("GPL v2");
+--- a/drivers/clk/qcom/Kconfig
++++ b/drivers/clk/qcom/Kconfig
+@@ -371,6 +371,15 @@
+ 	  Say Y if you want to support CPU frequency scaling on devices
+ 	  such as msm8916.
+ 
++config QCOM_CLK_CPU_8994
++	tristate "MSM8994 CPU cluster clock controller"
++	depends on COMMON_CLK_QCOM
++	default ARCH_QCOM
++	help
++	  Support for the per-cluster PLLs and muxes (APCS alias) that clock
++	  the Cortex-A53 and Cortex-A57 clusters of msm8994. Say Y if you
++	  want CPU frequency scaling on msm8994 devices.
++
+ config QCOM_CLK_APCC_MSM8996
+ 	tristate "MSM8996 CPU Clock Controller"
+ 	select QCOM_KRYO_L2_ACCESSORS
+--- a/drivers/clk/qcom/Makefile
++++ b/drivers/clk/qcom/Makefile
+@@ -99,6 +99,7 @@
+ obj-$(CONFIG_QCOM_A53PLL) += a53-pll.o
+ obj-$(CONFIG_QCOM_A7PLL) += a7-pll.o
+ obj-$(CONFIG_QCOM_CLK_APCS_MSM8916) += apcs-msm8916.o
++obj-$(CONFIG_QCOM_CLK_CPU_8994) += clk-cpu-8994.o
+ obj-$(CONFIG_QCOM_CLK_APCC_MSM8996) += apcs-msm8996.o clk-cpu-8996.o clk-cbf-8996.o
+ obj-$(CONFIG_QCOM_CLK_APCS_SDX55) += apcs-sdx55.o
+ obj-$(CONFIG_QCOM_CLK_RPM) += clk-rpm.o

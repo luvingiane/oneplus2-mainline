@@ -1,0 +1,12 @@
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * OnePlus 2 (DTS_DEFINES=OP2_TSENS): MSM8994 TSENS reader (patch 0159).
+ * Registers as downstream msm8994.dtsi:3198: TSENS 0xfc4a8000 (0x2000),
+ * calibration fuses 0xfc4bc000 (0x1000).
+ */
+&soc {
+	op2-tsens@fc4a8000 {
+		compatible = "oneplus,op2-tsens";
+		reg = <0xfc4a8000 0x2000>, <0xfc4bc000 0x1000>;
+	};
+};

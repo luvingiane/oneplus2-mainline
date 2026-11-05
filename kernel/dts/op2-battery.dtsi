@@ -13,6 +13,7 @@
 	pmic@2 {
 		battery {
 			compatible = "oneplus,oneplus2-battery";
+			charge-full-design-microamp-hours = <3300000>;
 			oneplus,init-regs = <0x10f2 0x04 1
 					     0x10fc 0xd2 1
 					     0x13f2 0x07 1

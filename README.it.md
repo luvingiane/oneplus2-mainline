@@ -24,8 +24,10 @@ Ultima tappa (2026-11-03): la GPU hardware disegna l'interfaccia di ztOS su main
 | Touchscreen, tasti, slider | funziona | slider = `gpio-keys` F13/F15 |
 | USB (dispositivo, rete NCM + seriale) | funziona se avviato da fastboot | dopo un avvio normale il PC non vede ancora il telefono (vedi LOG.md) |
 | Batteria | funziona | `kernel/patches/0013` |
-| Wi-Fi (QCA6174 su PCIe) | non ancora | PHY PCIe: clock aux e reset del PHY sistemati (0028, 0020), il PLL non si aggancia ancora |
-| Bluetooth | non ancora | il chip non risponde |
+| Wi-Fi (QCA6174 su PCIe) | funziona | il chip è su **PCIe1**, non su PCIe0 (patch 0149-0158, 0162, 0164, 0165; DT `op2-wifi.dtsi` con `OP2_WIFI_PCIE1 OP2_WIFI_BOOT`); ath10k scansiona e si associa, vedi [docs/MILESTONE-2026-11-05-wifi.md](docs/MILESTONE-2026-11-05-wifi.md) (in inglese). Il firmware va nell'initramfs e `CONFIG_FW_LOADER_USER_HELPER` spento. Parte con rfkill bloccato |
+| Bluetooth | funziona | QCA6174 su UART (`op2-bt.dtsi`, patch 0161): serve il GPIO WL_EN alto, la lettura della versione a 115200 baud e rampatch/nvm QCA nell'initramfs. L'indirizzo BD di fabbrica non è valido: ne va impostato uno |
+| Temperatura SoC | funziona | 16 zone TSENS tarate dai fusibili (patch 0159, `op2-tsens.dtsi`); il cluster A57 si riavvia vicino a 118 °C, `rootfs-overlay/usr/local/bin/op2-thermal.py` rallenta i post-divisori del PLL |
+| Vibrazione, sensore hall | presenti | haptic PMI8994 come dispositivo input FF_RUMBLE (patch 0163); hall sul GPIO 75 come `SW_MACHINE_COVER` (cover StyleSwap). Non ancora provati a mano |
 | Audio | altoparlante funziona | ADSP avviato (`op2-adsp.dtsi`), MI2S quaternario q6 -> amplificatore TFA9890 (`op2-audio.dtsi`, patch 0029); il codec WCD9330 (microfoni, capsula, jack) non ha driver mainline |
 | GPU (Adreno 430) | funziona su 7.3 e 6.12 | **7.3: la GL hardware disegna tutta l'interfaccia ztMETRO dalla eMMC, senza blocchi né invii falliti** (patch `0130` + `0144`: una VM con MMU "vuoto", IOVA == fisico; cmdline `msm.identity_iova=1 msm.op2_gpu_phys=1 cma=768M`; Mesa freedreno FD430 con `FD_MESA_DEBUG=sysmem`, la strada OCMEM/GMEM è ancora rifiutata da TrustZone), vedi [docs/MILESTONE-2026-11-03.md](docs/MILESTONE-2026-11-03.md). 6.12: SMMU collegata + indirizzi fisici (`patches-612/0104`). Il clock della GPU è fisso a 300 MHz |
 

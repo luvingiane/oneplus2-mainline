@@ -1,0 +1,218 @@
+--- a/drivers/clk/qcom/clk-cpu-8994.c
++++ b/drivers/clk/qcom/clk-cpu-8994.c
+@@ -81,7 +81,7 @@
+ /* Mux register offset from the cluster alias base */
+ static bool cpuclk_rw;
+ static int cpuclk_stage = 99;
+-static unsigned int cpuclk_rdmask = 0x1f;
++static unsigned int cpuclk_rdmask = 0x1e;
+ static unsigned int cpuclk_muxoff = 0x54;
+ static bool cpuclk_muxscm;
+ static int cpuclk_pdiv = -1;
+@@ -107,12 +107,61 @@
+ module_param_named(muxoff, cpuclk_muxoff, uint, 0444);
+ MODULE_PARM_DESC(muxoff, "debug: offset of the mux register the probe reads");
+ module_param_named(rdmask, cpuclk_rdmask, uint, 0444);
+-MODULE_PARM_DESC(rdmask, "debug: which state registers the probe reads (1 mux, 2 pll0 mode, 4 L, 8 user ctl, 16 pll1 mode)");
++MODULE_PARM_DESC(rdmask, "debug: which state registers the probe reads (1 mux DIRECT read — hangs the bus on this hw, 2 pll0 mode, 4 L, 8 user ctl, 16 pll1 mode); default 0x1e = no mux read");
+ module_param_named(stage, cpuclk_stage, int, 0444);
+ MODULE_PARM_DESC(stage, "debug: stop the probe after this step (0 start, 1 ioremap, 2 state read, 3 clocks registered)");
+ module_param_named(rw, cpuclk_rw, bool, 0444);
+ MODULE_PARM_DESC(rw, "allow clock changes (default: read-only, the state is only logged)");
+ 
++/* ---- A57 cluster (c1, 0xf9016000 PLL / 0xf900f000 mux) staged bring-up ----
++ * Task 267. Everything is default-off; the stages mirror the CAF sequence
++ * (clock-cpu-8994.c cpu_clock_8994_init_a57_v2: aux first, then PLL constants,
++ * then L/enable, mux last) but each step is behind its own parameter so a hang
++ * can be bisected from the cmdline. Stages >= 3 also need rw=1.
++ *   a57stage 0 = nothing (default: A57 cores stay on the reference clock, stable)
++ *            1 = ioremap c1_pll/c1_mux only
++ *            2 = + read c1 PLL state (a57rdmask; mux read only if bit0, via SCM if a57muxscm)
++ *            3 = + write V2 PLL constants to c1 pll0/pll1 (a57init, default on)
++ *            4 = + program c1 pll0 L_VAL=a57l, ALPHA=0 and enable it (a57en) — PLL not in use
++ *            5 = + change ONLY the c1 pll0 post-divider USER_CTL[9:8] = a57pdiv (the trick
++ *                proven on A53 with pdiv; the mux is NOT touched)
++ *            6 = + write the c1 mux register (a57muxw) — DANGEROUS: the running A57
++ *                cores switch clock source here
++ * Mux write values (V2 layout, LF bits[2:1], HF bits[4:3]):
++ *   0x6 = aux GPLL0 600 MHz (CAF init_a57_v2 first write), 0x0 = XO,
++ *   0x4 = pll0/div (LF=2, HF=lf), 0x2 = pll1/div, 0x18 = pll0 direct, 0x8 = pll1 direct
++ */
++static bool a57rw;
++module_param_named(a57rw, a57rw, bool, 0444);
++MODULE_PARM_DESC(a57rw, "A57 stages >= 3 may write (separate from rw, which also lets the A53 part write its mux: a hang)");
++static int a57stage;
++static unsigned int a57rdmask = 0x1e;
++static bool a57muxscm;
++static int a57muxw = -1;
++static bool a57init = true;
++static int a57l = -1;
++static bool a57en;
++static int a57pdiv = -1;
++static bool a57clk;
++module_param_named(a57stage, a57stage, int, 0444);
++MODULE_PARM_DESC(a57stage, "A57 cluster staged bring-up: 0 off (default), 1 ioremap, 2 read c1 PLL state, 3 V2 constants (rw), 4 L_VAL+enable PLL (rw), 5 post-div only (rw), 6 mux write (rw, dangerous)");
++module_param_named(a57rdmask, a57rdmask, uint, 0444);
++MODULE_PARM_DESC(a57rdmask, "A57: state registers to read at stage 2 (1 mux, 2 pll0 mode, 4 L, 8 user ctl, 16 pll1 mode); default 0x1e = PLL regs only");
++module_param_named(a57muxscm, a57muxscm, bool, 0444);
++MODULE_PARM_DESC(a57muxscm, "A57: read the c1 mux via qcom_scm_io_readl(0xf900f054) instead of directly at stage 2");
++module_param_named(a57muxw, a57muxw, int, 0444);
++MODULE_PARM_DESC(a57muxw, "A57: value written to the c1 mux register at stage 6 (e.g. 6=aux 600MHz, 4=pll0/div), -1 = skip");
++module_param_named(a57init, a57init, bool, 0444);
++MODULE_PARM_DESC(a57init, "A57: write the V2 PLL constants at stage 3 (default on)");
++module_param_named(a57l, a57l, int, 0444);
++MODULE_PARM_DESC(a57l, "A57: L_VAL for c1 pll0 at stage 4 (L=80 -> 1536 MHz VCO), -1 = skip");
++module_param_named(a57en, a57en, bool, 0444);
++MODULE_PARM_DESC(a57en, "A57: enable c1 pll0 (MODE sequence, wait LOCK_DET) at stage 4");
++module_param_named(a57pdiv, a57pdiv, int, 0444);
++MODULE_PARM_DESC(a57pdiv, "A57: c1 pll0 post-divider USER_CTL[9:8] at stage 5 (0=/1, 1=/2, 3=/4), -1 = skip; mux untouched");
++module_param_named(a57clk, a57clk, bool, 0444);
++MODULE_PARM_DESC(a57clk, "A57: register a57_pll0/a57_pll1/a57_clk and expose a57_clk as clock index 1 (for cpufreq-dt on cpu4-7)");
++
+ #define MUX_8994_REG		0x54
+ #define MUX_8994_LF_SHIFT	1
+ #define MUX_8994_LF_MASK	GENMASK(2, 1)
+@@ -703,10 +752,133 @@
+ 		plls[i][1]->clkr.regmap = pll_maps[i];
+ 	}
+ 
++	/* ---- A57 cluster (c1) staged bring-up, all default-off (task 267) ---- */
++	if (a57stage > 0) {
++		u32 m0 = 0, l0 = 0, u0 = 0, m1 = 0, mode;
++
++		pll_maps[1] = devm_regmap_init_mmio(dev,
++			devm_platform_ioremap_resource_byname(pdev, pll_names[1]),
++			&clk_cpu_8994_regmap_config);
++		if (IS_ERR(pll_maps[1]))
++			return PTR_ERR(pll_maps[1]);
++		mux_maps[1] = devm_regmap_init_mmio(dev,
++			devm_platform_ioremap_resource_byname(pdev, mux_names[1]),
++			&clk_cpu_8994_regmap_config);
++		if (IS_ERR(mux_maps[1]))
++			return PTR_ERR(mux_maps[1]);
++		dev_info(dev, "a57: c1_pll/c1_mux ioremapped (a57stage %d)\n", a57stage);
++
++		if (a57stage >= 2) {
++			/* PLL-block reads are the proven-safe class (same block as c0) */
++			if (a57rdmask & 2)
++				regmap_read(pll_maps[1], 0x0, &m0);
++			if (a57rdmask & 4)
++				regmap_read(pll_maps[1], PLL_8994_L_VAL, &l0);
++			if (a57rdmask & 8)
++				regmap_read(pll_maps[1], PLL_8994_USER_CTL, &u0);
++			if (a57rdmask & 16)
++				regmap_read(pll_maps[1], 0x40, &m1);
++			if (a57rdmask & 1) {
++				if (a57muxscm) {
++					int r = qcom_scm_io_readl(0xf900f000 + MUX_8994_REG, &mux_val);
++
++					dev_info(dev, "a57: c1 mux via scm: ret %d val %#x\n", r, mux_val);
++				} else {
++					regmap_read(mux_maps[1], MUX_8994_REG, &mux_val);
++					dev_info(dev, "a57: c1 mux direct read: %#x\n", mux_val);
++				}
++			}
++			dev_info(dev, "a57 state: pll0 mode %#x L %#x user %#x, pll1 mode %#x\n",
++				 m0, l0, u0, m1);
++		}
++
++		if (a57stage >= 3 && a57rw) {
++			/* V2 PLL constants on both c1 PLLs (CAF init_v2_data, clock-cpu-8994.c:1611-1626);
++			 * the PLLs are not the CPU source (mux at XO), so this is safe-class */
++			if (a57init) {
++				clk_cpu_8994_pll_init(pll_maps[1], 0x0);
++				clk_cpu_8994_pll_init(pll_maps[1], 0x40);
++				dev_info(dev, "a57: c1 PLL V2 constants written\n");
++			}
++
++			if (a57stage >= 4 && a57l >= 0) {
++				regmap_write(pll_maps[1], PLL_8994_L_VAL, a57l);
++				regmap_write(pll_maps[1], PLL_8994_ALPHA_VAL, 0);
++				dev_info(dev, "a57: c1 pll0 L=%d (%lu MHz VCO)\n",
++					 a57l, (unsigned long)a57l * 19200000UL / 1000000UL);
++			}
++			if (a57stage >= 4 && a57en) {
++				int count;
++				u32 testlo;
++
++				/* CAF variable_rate_pll_clk_enable() (drivers/clk/qcom/clock-pll.c:259-345) +
++				 * __variable_rate_pll_init(): APC_PDN (MODE bit 24) cleared first, TEST_CTL debug
++				 * bits around the reset release, 200 us before the lock is looked at. */
++				regmap_update_bits(pll_maps[1], PLL_8994_MODE, BIT(24), 0);
++				regmap_update_bits(pll_maps[1], PLL_8994_USER_CTL, BIT(0) | BIT(3), BIT(0) | BIT(3));
++				regmap_update_bits(pll_maps[1], PLL_8994_MODE, BIT(3), BIT(3));
++				regmap_read(pll_maps[1], PLL_8994_TEST_CTL, &testlo);
++				testlo = (testlo & ~GENMASK(7, 6)) | 0xc0;
++				regmap_write(pll_maps[1], PLL_8994_TEST_CTL, testlo);
++				mb();
++				regmap_update_bits(pll_maps[1], PLL_8994_MODE,
++						   PLL_8994_BYPASSNL, PLL_8994_BYPASSNL);
++				mb();
++				udelay(10);
++				regmap_update_bits(pll_maps[1], PLL_8994_MODE,
++						   PLL_8994_RESET_N, PLL_8994_RESET_N);
++				mb();
++				udelay(200);
++				regmap_write(pll_maps[1], PLL_8994_TEST_CTL, 0);
++				for (count = 400; count > 0; count--) {
++					regmap_read(pll_maps[1], PLL_8994_MODE, &mode);
++					if (mode & PLL_8994_LOCK_DET)
++						break;
++					udelay(1);
++				}
++				if (mode & PLL_8994_LOCK_DET)
++					regmap_update_bits(pll_maps[1], PLL_8994_MODE,
++							   PLL_8994_OUTCTRL, PLL_8994_OUTCTRL);
++				dev_info(dev, "a57: c1 pll0 enabled, mode %#x lock %d\n",
++					 mode, !!(mode & PLL_8994_LOCK_DET));
++			}
++
++			if (a57stage >= 5 && a57pdiv >= 0) {
++				/* the trick proven on A53 (pdiv): change ONLY the post-divider
++				 * of the c1 PLL, the mux register is NOT touched */
++				regmap_update_bits(pll_maps[1], PLL_8994_USER_CTL,
++						   GENMASK(9, 8), (a57pdiv & 3) << 8);
++				mb();
++				udelay(20);
++				regmap_read(pll_maps[1], PLL_8994_USER_CTL, &u0);
++				dev_info(dev, "a57: c1 pll0 post-div set, user ctl now %#x\n", u0);
++			}
++
++			if (a57stage >= 6 && a57muxw >= 0) {
++				/* DANGEROUS: the running A57 cores switch source here */
++				regmap_write(mux_maps[1], MUX_8994_REG, a57muxw);
++				mb();
++				udelay(5);
++				dev_info(dev, "a57: c1 mux written %#x\n", a57muxw);
++			}
++		} else if (a57stage >= 3) {
++			dev_info(dev, "a57: stages >= 3 skipped (a57rw=0)\n");
++		}
++
++		/* wire the cluster-1 clock data (no register access by itself) */
++		a57_cpuclk.pll_regmap = pll_maps[1];
++		a57_cpuclk.clkr.regmap = mux_maps[1];
++		a57_cpuclk.pll_hws[0] = &a57_pll0.clkr.hw;
++		a57_cpuclk.pll_hws[1] = &a57_pll1.clkr.hw;
++		mutex_init(&a57_cpuclk.lock);
++		a57_pll0.clkr.regmap = pll_maps[1];
++		a57_pll1.clkr.regmap = pll_maps[1];
++	}
++
+ 	dev_info(dev, "probe: state read, registering clocks\n");
+ 	if (cpuclk_stage <= 2)
+ 		return -ENODEV;
+-	for (i = 0; i < 3; i++) {	/* the A53 PLLs and CPU clock only */
++	for (i = 0; i < (a57clk ? 6 : 3); i++) {	/* A53 PLLs+cpu clock, plus A57 if a57clk */
+ 		ret = devm_clk_register_regmap(dev, clk_cpu_8994_clks[i]);
+ 		dev_info(dev, "probe: clock %d registered (%d)\n", i, ret);
+ 		if (ret)
+@@ -718,7 +890,7 @@
+ 		return -ENOMEM;
+ 	data->num = 2;
+ 	data->hws[CLK_8994_A53] = &a53_cpuclk.clkr.hw;
+-	data->hws[CLK_8994_A57] = ERR_PTR(-ENODEV);	/* A57 cluster not brought online */
++	data->hws[CLK_8994_A57] = a57clk ? &a57_cpuclk.clkr.hw : ERR_PTR(-ENODEV);
+ 
+ 	dev_info(dev, "probe: adding provider\n");
+ 	if (cpuclk_stage <= 3)

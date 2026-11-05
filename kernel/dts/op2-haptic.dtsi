@@ -1,0 +1,18 @@
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * OnePlus 2 (DTS_DEFINES=OP2_HAPTIC): PMI8994 haptics block, ERM motor, direct play mode.
+ * Stock op2-hw14.dtb qcom,haptic@c000 under the SPMI slave 3 (lines 6211-6232): vmax 3000 mV,
+ * ilim 800 mA, play rate 5263 us (HW 13-14 use this block, HW 11-12 a TI DRV2605 on i2c).
+ * Driver: drivers/input/misc/op2-pmi8994-haptic.c (patch 0163), an FF_RUMBLE input device.
+ */
+&spmi_bus {
+	pmic@3 {
+		haptic@c000 {
+			compatible = "oneplus,op2-pmi8994-haptic";
+			reg = <0xc000>;
+			qcom,vmax-mv = <3000>;
+			qcom,ilim-ma = <800>;
+			qcom,wave-play-rate-us = <5263>;
+		};
+	};
+};

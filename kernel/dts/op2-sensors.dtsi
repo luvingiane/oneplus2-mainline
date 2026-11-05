@@ -1,0 +1,82 @@
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * OnePlus 2 (DTS_DEFINES=OP2_SENSORS): the sensors that sit on the AP.
+ *
+ * ST VL6180 (ALS + range + proximity): i2c BLSP1 QUP6 0x29, IRQ tlmm 61,
+ * chip enable/standby tlmm 62, vdd = PM8994 L18 2.85 V (OnePlus
+ * msm8994-mtp.dtsi stmvl6180-tof@29; research/downstream-dtb op2-hw14.dtb,
+ * rails at dtc lines 4099-4108). Driver: drivers/iio/light/vl6180.c
+ * (CONFIG_VL6180), the binding carries no supply/gpio properties so the rail
+ * is always-on and the enable line is a gpio-hog.
+ *
+ * Hall sensor on tlmm 75 (stock node "hallsensor_key": SW_LID, wakeup, 15 ms).
+ * Reported here as SW_MACHINE_COVER ("cover closed"), NOT SW_LID: logind
+ * suspends the machine on SW_LID. What the sensor really detects (flip cover
+ * magnet, StyleSwap cover?) is unverified.
+ */
+#if defined(OP2_SENSORS_L18) || defined(OP2_FPCTZ)
+&rpm_requests {
+	regulators-0 {
+		pm8994_l18: l18 {
+			regulator-min-microvolt = <2850000>;
+			regulator-max-microvolt = <2850000>;
+			regulator-always-on;
+		};
+	};
+};
+#endif
+
+#ifdef OP2_SENSORS_LVS1
+/* VL6180 I2C/IO rail in the stock DT: vcc_i2c_1v8-supply = pm8994_lvs1 */
+&rpm_requests {
+	regulators-0 {
+		vdd_lvs1_2-supply = <&pm8994_s4>;
+
+		pm8994_lvs1: lvs1 {
+			regulator-always-on;
+		};
+	};
+};
+#endif
+
+#ifdef OP2_SENSORS_CE
+&tlmm {
+	vl6180-ce-hog {
+		gpio-hog;
+		gpios = <62 GPIO_ACTIVE_HIGH>;
+#ifdef OP2_SENSORS_CELOW
+		output-low;
+#else
+		output-high;
+#endif
+		line-name = "vl6180-ce";
+	};
+};
+#endif
+
+#ifdef OP2_SENSORS_VL
+&blsp1_i2c6 {
+	proximity@29 {
+		compatible = "st,vl6180";
+		reg = <0x29>;
+		interrupts-extended = <&tlmm 61 IRQ_TYPE_EDGE_FALLING>;
+	};
+};
+#endif
+
+#ifdef OP2_SENSORS_HALL
+/ {
+	hall-sensor {
+		compatible = "gpio-keys";
+
+		hall {
+			label = "hall";
+			gpios = <&tlmm 75 GPIO_ACTIVE_LOW>;
+			linux,input-type = <EV_SW>;
+			linux,code = <SW_MACHINE_COVER>;
+			wakeup-source;
+			debounce-interval = <15>;
+		};
+	};
+};
+#endif

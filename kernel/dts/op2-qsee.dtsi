@@ -1,0 +1,26 @@
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * OnePlus 2: QSEECOM bring-up nodes (patch 0160).
+ *   OP2_QSEE    read-only LOOKUP check of a few app names at boot
+ *   OP2_FPCTZ   debugfs-driven load of the fingerprint TrustZone app (loads code into TZ!)
+ */
+&soc {
+#ifdef OP2_QSEE
+	op2-qsee-probe {
+		compatible = "oneplus,op2-qsee-probe";
+	};
+#endif
+#ifdef OP2_FPCTZ
+	op2-fpc-tz {
+		compatible = "oneplus,op2-fpc-tz";
+		/* stock fpc_fpc1020@0: vdd_ana = L18, vdd_io = S4 (always on), gpio_1V8_EN 41,
+		 * gpio_fp2050 94, gpio_rst 89, SPI clocks BLSP2 AHB + QUP6 */
+		vdd-ana-supply = <&pm8994_l18>;
+		clocks = <&gcc GCC_BLSP2_AHB_CLK>, <&gcc GCC_BLSP2_QUP6_SPI_APPS_CLK>;
+		clock-names = "iface", "core";
+		envdd-gpios = <&tlmm 41 GPIO_ACTIVE_HIGH>;
+		fp2050-gpios = <&tlmm 94 GPIO_ACTIVE_HIGH>;
+		rst-gpios = <&tlmm 89 GPIO_ACTIVE_LOW>;
+	};
+#endif
+};

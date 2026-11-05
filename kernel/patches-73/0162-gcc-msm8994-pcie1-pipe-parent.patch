@@ -1,0 +1,53 @@
+--- a/drivers/clk/qcom/gcc-msm8994.c
++++ b/drivers/clk/qcom/gcc-msm8994.c
+@@ -28,6 +28,7 @@
+ 	P_GPLL0,
+ 	P_GPLL4,
+ 	P_PCIE_0_PIPE,
++	P_PCIE_1_PIPE,
+ };
+ 
+ static struct clk_alpha_pll gpll0_early = {
+@@ -936,16 +937,37 @@
+ 	},
+ };
+ 
++/*
++ * op2 306: as patch 0021 for RC0, RC1's pipe clock comes from its PHY
++ * (CAF clock-gcc-8994.c: F_EXT(125 MHz, pcie_pipe), source 2). Inert
++ * unless the DT gives the GCC node a "pcie_1_pipe" clock (only
++ * op2-wifi.dtsi with OP2_WIFI_PCIE1 does); without it the parent is
++ * dropped and the RCG keeps its previous behaviour.
++ */
++static const struct freq_tbl ftbl_pcie_1_pipe_clk_src[] = {
++	F(125000000, P_PCIE_1_PIPE, 1, 0, 0),
++	{ }
++};
++
++static const struct parent_map gcc_xo_pcie_1_pipe_map[] = {
++	{ P_XO, 0 },
++	{ P_PCIE_1_PIPE, 2 },
++};
++
++static const struct clk_parent_data gcc_xo_pcie_1_pipe[] = {
++	{ .fw_name = "xo" },
++	{ .fw_name = "pcie_1_pipe" },
++};
++
+ static struct clk_rcg2 pcie_1_pipe_clk_src = {
+ 	.cmd_rcgr = 0x1b5c,
+ 	.hid_width = 5,
+-	.freq_tbl = ftbl_pcie_pipe_clk_src,
++	.parent_map = gcc_xo_pcie_1_pipe_map,
++	.freq_tbl = ftbl_pcie_1_pipe_clk_src,
+ 	.clkr.hw.init = &(struct clk_init_data){
+ 		.name = "pcie_1_pipe_clk_src",
+-		.parent_data = &(const struct clk_parent_data){
+-				.fw_name = "xo",
+-		},
+-		.num_parents = 1,
++		.parent_data = gcc_xo_pcie_1_pipe,
++		.num_parents = ARRAY_SIZE(gcc_xo_pcie_1_pipe),
+ 		.ops = &clk_rcg2_ops,
+ 	},
+ };

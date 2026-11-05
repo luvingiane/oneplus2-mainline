@@ -1,0 +1,54 @@
+#!/bin/sh
+# OnePlus 2: limite termico a mano (frequenza) per i cluster A53/A57.
+# Il kernel 7.3 non ha il driver TSENS per MSM8994 e A crasha (reset) quando il SoC raggiunge
+# il codice ~840 del TSENS con 6-8 core a carico (LOG.md 5/11). Spegnere gli A57 NON e' una
+# soluzione (la riaccensione fallisce con EIO). Questo demone legge i 16 sensori
+# (devmem 0xfc4a8000+0x1044+4*n, bit 11:0 = codice) e cambia a gradini il post-divisore dei PLL:
+# USER_CTL[9:8] a 0xf9015010 (A53) e 0xf9016010 (A57): 0=/1, 1=/2, 3=/4.
+#   livello 0: come all'avvio (B: A53 1536; A: A53 768 + A57 768)
+#   livello 1: A57 /4 (se presenti) e A53 almeno /2     livello 2: A53 /4, A57 /4
+#   Se cpu4 non esiste (A57 spenti, es. B) il cluster A57 non viene mai toccato.
+#   HI: sopra questo codice scende di un livello   LO: sotto questo sale di un livello
+#   CRIT: sopra questo va subito al livello 2
+#   OFF: se a livello 2 il codice supera questo, gli A57 vengono messi offline PER SEMPRE (la
+#        riaccensione fallisce con EIO e non va tentata): a 8 core a 384 MHz il SoC sale ancora
+#        (760 -> 809 in 4 minuti) perche' gli A57 perdono anche fermi
+HI=${OP2_THERMAL_HI:-770} LO=${OP2_THERMAL_LO:-735} CRIT=${OP2_THERMAL_CRIT:-800} OFF=${OP2_THERMAL_OFF:-805} DT=${OP2_THERMAL_DT:-1}
+BASE=0xfc4a8000 A53=0xf9015010 A57=0xf9016010
+tmax() {
+	m=0
+	for n in 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+		v=$(devmem $((BASE + 0x1044 + 4 * n)) 32) || continue
+		c=$((v & 0xfff))
+		[ "$c" -gt "$m" ] && m=$c
+	done
+	echo $m
+}
+setdiv() { cur=$(devmem $1 32) && devmem $1 32 $(( (cur & ~0x300) | ($2 << 8) )) >/dev/null; }
+getdiv() { echo $(( ($(devmem $1 32) >> 8) & 3 )); }
+HAS57=0; [ -d /sys/devices/system/cpu/cpu4 ] && HAS57=1
+I53=$(getdiv $A53); [ $HAS57 = 1 ] && I57=$(getdiv $A57) || I57=0
+apply() {
+	a=$I53 b=$I57
+	case $1 in
+	1) [ $a -lt 1 ] && a=1; b=3 ;;
+	2) a=3; b=3 ;;
+	esac
+	setdiv $A53 $a
+	[ $HAS57 = 1 ] && [ -d /sys/devices/system/cpu/cpu4 ] && setdiv $A57 $b
+}
+lvl=0 off=0
+while :; do
+	t=$(tmax) n=$lvl
+	if [ "$t" -ge "$CRIT" ]; then n=2
+	elif [ "$t" -ge "$HI" ] && [ $lvl -lt 2 ]; then n=$((lvl + 1))
+	elif [ "$t" -le "$LO" ] && [ $lvl -gt 0 ]; then n=$((lvl - 1))
+	fi
+	[ $n != $lvl ] && { apply $n; lvl=$n; }
+	if [ $off = 0 ] && [ $lvl = 2 ] && [ "$t" -ge "$OFF" ]; then
+		for c in 7 6 5 4; do echo 0 > /sys/devices/system/cpu/cpu$c/online; done
+		off=1
+	fi
+	echo "$(cut -d' ' -f1 /proc/uptime) code=$t lvl=$lvl a53=$(devmem $A53 32) a57=$([ -d /sys/devices/system/cpu/cpu4 ] && devmem $A57 32)" >> /run/op2-thermal.log
+	sleep "$DT"
+done

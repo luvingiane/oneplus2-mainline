@@ -1,0 +1,11 @@
+[Unit]
+Description=OnePlus 2 thermal limit (TSENS read by hand, PLL post-divider throttling)
+ConditionPathExists=/usr/bin/python3
+
+[Service]
+ExecStart=/usr/local/bin/op2-thermal.py
+Restart=always
+Nice=-10
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,32 @@
+--- a/drivers/phy/qualcomm/phy-qcom-pcie-msm8994.c
++++ b/drivers/phy/qualcomm/phy-qcom-pcie-msm8994.c
+@@ -135,6 +135,11 @@
+ 	return ret;
+ }
+ 
++static bool op2_pcie_pwrdn01;
++module_param_named(op2_pcie_pwrdn01, op2_pcie_pwrdn01, bool, 0644);
++MODULE_PARM_DESC(op2_pcie_pwrdn01,
++	"op2 273-01: after the init table also write PWRDN=0x01/START=0x03 (patch 0137); default 0 keeps the CAF final value PWRDN=0x03 (CAF pci-msm.c:973)");
++
+ static int msm8994_pcie_phy_power_on(struct phy *phy)
+ {
+ 	struct msm8994_pcie_phy *qphy = phy_get_drvdata(phy);
+@@ -146,11 +151,12 @@
+ 		writel(msm8994_pcie_phy_tbl[i].val,
+ 		       qphy->base + msm8994_pcie_phy_tbl[i].reg);
+ 
+-	/* op2 0137: power-up after the init table (CAF pcie_phy_init writes
+-	 * PWRDN=0x01 then START=0x03 at the end): without this the PHY stays
+-	 * in PWRDN=0x3 and the PLL never locks. */
+-	writel(0x01, qphy->base + PCIE_PHY_POWER_DOWN_CONTROL);
+-	writel(0x03, qphy->base + PCIE_PHY_START);
++	/* op2 0137, param-gated by 273-01: CAF pcie_phy_init leaves the final
++	 * PWRDN=0x03 (pci-msm.c:973); the 0x01 re-write is a deviation. */
++	if (op2_pcie_pwrdn01) {
++		writel(0x01, qphy->base + PCIE_PHY_POWER_DOWN_CONTROL);
++		writel(0x03, qphy->base + PCIE_PHY_START);
++	}
+ 
+ 	/*
+ 	 * CAF: PHY stabilisation, then the pipe clock at 125 MHz (that

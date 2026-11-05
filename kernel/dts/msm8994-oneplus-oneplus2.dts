@@ -145,6 +145,22 @@
 	};
 
 	/*
+	 * Soft-key backlight: PMI8994 MPP4 (stock "button-backlight", qpnp-led
+	 * mpp, default off). The bootloader leaves it on and nothing owned it,
+	 * so the keys stayed lit with the screen off. As a GPIO LED ztmetro can
+	 * follow the display: /sys/class/leds/button-backlight/brightness.
+	 */
+	button-backlight {
+		compatible = "gpio-leds";
+
+		led-0 {
+			label = "button-backlight";
+			gpios = <&pmi8994_mpps 4 GPIO_ACTIVE_LOW>;
+			default-state = "off";
+		};
+	};
+
+	/*
 	 * Alert slider (OnePlus "tri-state key"): two switches to ground, no
 	 * external pull-ups. Measured 2026-10-25: top = GPIO 77 low,
 	 * middle = both high, bottom = GPIO 34 low. Each end position reads
@@ -270,8 +286,52 @@
 			regulator-system-load = <100000>;
 			regulator-allow-set-load;
 		};
+
 	};
 };
+
+#ifdef OP2_CPUFREQ_VREG
+/*
+ * CPU core rails (OP2_CPUFREQ), on the SPMI die of PM8994: the stock DTB
+ * (op2-hw14.dtb) has spm-regulator@2900 (S8 = VDD_APC0) and @3200
+ * (S11 = VDD_APC1, gang leader of S9+S10+S11) under qcom,pm8994@1, and
+ * its RPM bus only carries smpa1-5,7. Mainline qcom_spmi-regulator.c
+ * maps s8@0x2900 / s11@0x3200 (pm8994_regulators[]), ftsmps range
+ * 350000-1275000 uV. Declaring them on the RPM bus instead (the old
+ * OP2_CPUFREQ_VREG) makes qcom_smd-regulator.c send SWEN/UV requests
+ * for RPM resources SMPA 8/11 at probe: those are not the APC rails on
+ * this board, and the failed probe aborts rpm_reg_probe() (all RPM
+ * regulators of regulators-0 are devm-unregistered) -> boot crash.
+ * Here: wide min/max + boot-on, so at probe the kernel only re-enables
+ * them (already on from the bootloader) and reads the voltage back;
+ * cpufreq-dt then sets the per-OPP voltage via cpu-supply.
+ */
+&pm8994_spmi_regulators {
+	pm8994_s8: s8 {
+#ifdef OP2_CPUFREQ_VHI_S8
+		/* test: pin the rail at the CAF ceiling corner (min = max forces it at probe) */
+		regulator-min-microvolt = <1180000>;
+#else
+		regulator-min-microvolt = <700000>;
+#endif
+		regulator-max-microvolt = <1180000>;
+		regulator-boot-on;
+		vdd_s8-supply = <&vph_pwr>;
+	};
+
+	pm8994_s11: s11 {
+#ifdef OP2_CPUFREQ_VHI_S11
+		/* test: pin the rail at the CAF ceiling corner (min = max forces it at probe) */
+		regulator-min-microvolt = <1225000>;
+#else
+		regulator-min-microvolt = <700000>;
+#endif
+		regulator-max-microvolt = <1225000>;
+		regulator-boot-on;
+		vdd_s11-supply = <&vph_pwr>;
+	};
+};
+#endif
 
 #ifndef OP2_NO_TOUCH
 /* Synaptics S3320 touchscreen (downstream: i2c@f9924000 synaptics-rmi-ts@20) */
@@ -336,7 +396,8 @@
 
 		rmi4-f1a@1a {
 			reg = <0x1a>;
-			linux,keycodes = <KEY_BACK KEY_APPSELECT KEY_HOMEPAGE>;
+			/* the pad's second key is the owner's Start key (tap = Start, long = app switcher): the phone's real home is the fingerprint sensor, owned by TrustZone */
+			linux,keycodes = <KEY_BACK KEY_HOMEPAGE KEY_APPSELECT>;
 		};
 	};
 };
@@ -451,6 +512,19 @@
 #include "op2-wifi.dtsi"
 #endif
 
+/* pieces switch on with OP2_SENSORS_L18 / _CE / _VL / _HALL */
+#include "op2-sensors.dtsi"
+
+#ifdef OP2_TSENS
+#include "op2-tsens.dtsi"
+#endif
+
+#ifdef OP2_HAPTIC
+#include "op2-haptic.dtsi"
+#endif
+
+#include "op2-qsee.dtsi"
+
 #ifdef OP2_SECURE_PTBL
 #include "op2-iommu-sec.dtsi"
 #endif
@@ -467,6 +541,10 @@
 #include "op2-smp.dtsi"
 #endif
 
+#ifdef OP2_CPUFREQ
+#include "op2-cpufreq.dtsi"
+#endif
+
 #ifdef OP2_ADSP
 #include "op2-adsp.dtsi"
 #endif
@@ -477,3 +555,15 @@
 
 #include "op2-battery.dtsi"
 #include "op2-reboot.dtsi"
+
+#ifdef OP2_PMICDBG
+/* read-only register dump of the PM8994 slave 1 (patch 0152: rails S8-S12) */
+&spmi_bus {
+	pmic@1 {
+		op2-pmicdbg {
+			compatible = "oneplus,op2-pmicdbg";
+		};
+	};
+};
+#endif
+

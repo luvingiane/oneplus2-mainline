@@ -1,0 +1,541 @@
+--- a/drivers/firmware/qcom/Kconfig
++++ b/drivers/firmware/qcom/Kconfig
+@@ -95,3 +95,16 @@
+ 	  platforms.
+ 
+ endmenu
++
++config OP2_QSEE_PROBE
++	tristate "OnePlus 2 QSEECOM lookup check"
++	depends on QCOM_SCM && OF
++	help
++	  Logs the QSEECOM app-ID lookup result for a few names at boot.
++
++config OP2_FPC_TZ
++	tristate "OnePlus 2 fingerprint TZ app bring-up"
++	depends on QCOM_QSEECOM && QCOM_TZMEM && DEBUG_FS
++	help
++	  debugfs-driven load of the fingerprint TrustZone app via QSEECOM
++	  (region notification, common library, APP_START, SEND_DATA).
+--- a/drivers/firmware/qcom/Makefile
++++ b/drivers/firmware/qcom/Makefile
+@@ -11,3 +11,5 @@
+ obj-$(CONFIG_QCOM_QSEECOM_UEFISECAPP) += qcom_qseecom_uefisecapp.o
+ obj-$(CONFIG_QCOM_PAS)		+= qcom_pas.o
+ obj-$(CONFIG_QCOM_PAS_TEE)	+= qcom_pas_tee.o
++obj-$(CONFIG_OP2_QSEE_PROBE)	+= op2-qsee-probe.o
++obj-$(CONFIG_OP2_FPC_TZ)	+= op2-fpc-tz.o
+--- a/drivers/firmware/qcom/qcom_scm.c
++++ b/drivers/firmware/qcom/qcom_scm.c
+@@ -475,6 +475,21 @@
+ EXPORT_SYMBOL_GPL(qcom_scm_set_cold_boot_addr);
+ 
+ /**
++ * qcom_scm_set_cold_boot_addr_aarch64() - Set the cold boot address for all
++ * cpus, to be entered in AArch64 state (multi-cluster call only)
++ * @entry: Entry point function for the cpus
++ *
++ * For arm64 kernels on firmware without PSCI (MSM8994): without the AArch64
++ * flag the secondary cores start in AArch32 state.
++ */
++int qcom_scm_set_cold_boot_addr_aarch64(void *entry)
++{
++	return qcom_scm_set_boot_addr_mc(entry, QCOM_SCM_BOOT_MC_FLAG_COLDBOOT |
++					 QCOM_SCM_BOOT_MC_FLAG_AARCH64);
++}
++EXPORT_SYMBOL_GPL(qcom_scm_set_cold_boot_addr_aarch64);
++
++/**
+  * qcom_scm_cpu_power_down() - Power down the cpu
+  * @flags:	Flags to flush cache
+  *
+@@ -1279,6 +1294,34 @@
+ }
+ EXPORT_SYMBOL_GPL(qcom_scm_iommu_set_cp_pool_size);
+ 
++/*
++ * The version TZ reports for one of its features (a service id, e.g.
++ * QCOM_SCM_SVC_MP): major << 22 | minor << 12 | patch, as the CAF kernel's
++ * scm_get_feat_version() (OnePlus 2: CAF sets the content-protection pool
++ * size only from MP 1.1.1 on).
++ */
++int qcom_scm_get_feat_version(u32 feat, u64 *version)
++{
++	struct qcom_scm_desc desc = {
++		.svc = QCOM_SCM_SVC_INFO,
++		.cmd = QCOM_SCM_INFO_GET_FEAT_VERSION,
++		.arginfo = QCOM_SCM_ARGS(1),
++		.args[0] = feat,
++		.owner = ARM_SMCCC_OWNER_SIP,
++	};
++	struct qcom_scm_res res;
++	int ret;
++
++	if (!__qcom_scm_is_call_available(__scm->dev, QCOM_SCM_SVC_INFO,
++					  QCOM_SCM_INFO_GET_FEAT_VERSION))
++		return -EOPNOTSUPP;
++	ret = qcom_scm_call(__scm->dev, &desc, &res);
++	if (!ret)
++		*version = res.result[0];
++	return ret;
++}
++EXPORT_SYMBOL_GPL(qcom_scm_get_feat_version);
++
+ int qcom_scm_mem_protect_video_var(u32 cp_start, u32 cp_size,
+ 				   u32 cp_nonpixel_start,
+ 				   u32 cp_nonpixel_size)
+@@ -2295,6 +2338,42 @@
+ }
+ EXPORT_SYMBOL_GPL(qcom_scm_qseecom_app_send);
+ 
++/**
++ * qcom_scm_qseecom_op2_call() - Generic QSEECOM SCM call with plain value arguments.
++ * @owner: TZ owner (QSEECOM_TZ_OWNER_*).
++ * @svc:   TZ service.
++ * @cmd:   TZ command.
++ * @args:  Up to 4 value arguments.
++ * @nargs: Number of arguments.
++ * @types: Argument types, 2 bits per argument (0 VAL, 1 RO, 2 RW, 3 BUFVAL).
++ * @res3:  Response: result, response type, data.
++ *
++ * OnePlus 2 bring-up helper (APP_START, region notification, service image load).
++ */
++int qcom_scm_qseecom_op2_call(u32 owner, u32 svc, u32 cmd, const u64 *args, int nargs,
++			      u32 types, u64 res3[3])
++{
++	struct qcom_scm_desc desc = {};
++	struct qcom_scm_qseecom_resp res = {};
++	int i, ret;
++
++	if (nargs < 0 || nargs > 4)
++		return -EINVAL;
++	desc.owner = owner;
++	desc.svc = svc;
++	desc.cmd = cmd;
++	/* types: 2 bits per argument, 0 = VAL, 1 = RO buffer, 2 = RW buffer, 3 = BUFVAL */
++	desc.arginfo = (nargs & 0xf) | ((types & 0xff) << 4);
++	for (i = 0; i < nargs; i++)
++		desc.args[i] = args[i];
++	ret = qcom_scm_qseecom_call(&desc, &res);
++	res3[0] = res.result;
++	res3[1] = res.resp_type;
++	res3[2] = res.data;
++	return ret;
++}
++EXPORT_SYMBOL_GPL(qcom_scm_qseecom_op2_call);
++
+ /*
+  * We do not yet support re-entrant calls via the qseecom interface. To prevent
+  + any potential issues with this, only allow validated machines for now.
+--- a/include/linux/firmware/qcom/qcom_scm.h
++++ b/include/linux/firmware/qcom/qcom_scm.h
+@@ -62,6 +62,7 @@
+ bool qcom_scm_is_available(void);
+ 
+ int qcom_scm_set_cold_boot_addr(void *entry);
++int qcom_scm_set_cold_boot_addr_aarch64(void *entry);
+ int qcom_scm_set_warm_boot_addr(void *entry);
+ void qcom_scm_cpu_power_down(u32 flags);
+ int qcom_scm_set_remote_state(u32 state, u32 id);
+@@ -104,6 +105,7 @@
+ int qcom_scm_iommu_secure_ptbl_size(u32 spare, size_t *size);
+ int qcom_scm_iommu_secure_ptbl_init(u64 addr, u32 size, u32 spare);
+ int qcom_scm_iommu_set_cp_pool_size(u32 spare, u32 size);
++int qcom_scm_get_feat_version(u32 feat, u64 *version);
+ int qcom_scm_mem_protect_video_var(u32 cp_start, u32 cp_size,
+ 				   u32 cp_nonpixel_start, u32 cp_nonpixel_size);
+ int qcom_scm_assign_mem(phys_addr_t mem_addr, size_t mem_sz, u64 *src,
+@@ -170,6 +172,8 @@
+ #ifdef CONFIG_QCOM_QSEECOM
+ 
+ int qcom_scm_qseecom_app_get_id(const char *app_name, u32 *app_id);
++int qcom_scm_qseecom_op2_call(u32 owner, u32 svc, u32 cmd, const u64 *args, int nargs,
++			      u32 types, u64 res3[3]);
+ int qcom_scm_qseecom_app_send(u32 app_id, void *req, size_t req_size,
+ 			      void *rsp, size_t rsp_size);
+ 
+--- /dev/null
++++ b/drivers/firmware/qcom/op2-qsee-probe.c
+@@ -0,0 +1,38 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * OnePlus 2: one-shot QSEECOM sanity check. Asks the TrustZone for the app ID of a few
++ * names (LOOKUP, SMC 0x32000103, the only QSEECOM app call mainline implements next to SEND).
++ * -ENOENT = the call path works and the app is not loaded; any other error = something is
++ * wrong with the call convention. Read-only: loads and starts nothing.
++ */
++#include <linux/firmware/qcom/qcom_scm.h>
++#include <linux/module.h>
++#include <linux/platform_device.h>
++
++static const char * const names[] = { "fingerprints", "keymaster", "cmnlib", "widevine", "nonexistent-app" };
++
++static int op2_qsee_probe(struct platform_device *pdev)
++{
++	int i, ret;
++	u32 id;
++
++	if (!qcom_scm_is_available())
++		return -EPROBE_DEFER;
++	for (i = 0; i < ARRAY_SIZE(names); i++) {
++		id = 0;
++		ret = qcom_scm_qseecom_app_get_id(names[i], &id);
++		dev_info(&pdev->dev, "qsee lookup \"%s\": ret %d app_id %u\n", names[i], ret, id);
++	}
++	return 0;
++}
++
++static const struct of_device_id op2_qsee_of[] = { { .compatible = "oneplus,op2-qsee-probe" }, { } };
++MODULE_DEVICE_TABLE(of, op2_qsee_of);
++
++static struct platform_driver op2_qsee_driver = {
++	.probe = op2_qsee_probe,
++	.driver = { .name = "op2-qsee-probe", .of_match_table = op2_qsee_of },
++};
++module_platform_driver(op2_qsee_driver);
++MODULE_DESCRIPTION("OnePlus 2 QSEECOM lookup check");
++MODULE_LICENSE("GPL");
+--- /dev/null
++++ b/drivers/firmware/qcom/op2-fpc-tz.c
+@@ -0,0 +1,341 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * OnePlus 2: bring-up of the fingerprint TrustZone app ("fingerprints") through QSEECOM.
++ *
++ * Mainline implements app LOOKUP and SEND but not the load path. This driver adds the three
++ * missing calls as debugfs-driven steps (/sys/kernel/debug/op2-fpc-tz/), following the downstream
++ * qseecom.c (qseecom_load_commonlib_image / qseecom_load_app / region notification at probe):
++ *   region          QSEOS_APP_REGION_NOTIFICATION: tell TZ where it may load apps (secapp-region)
++ *   lib <mdt_len>   load the common library image (cmnlib: mdt + b00..b03) written to lib.bin
++ *   app <mdt_len>   APP_START (SMC 0x32000101): image written to app.bin -> app id
++ *   send <hex...>   SEND_DATA (SMC 0x30000001): request bytes, response read from `rsp`
++ * SMC command numbers: APP_START 0x01 and LOOKUP 0x03 are confirmed (mainline qcom_scm.c);
++ * REGION 0x05 and LOAD_SERVICES_IMAGE 0x07 are NOT verified (qseecomi.h is missing from the
++ * local CAF snapshot) and can be overridden with the id_region / id_lib module parameters.
++ */
++#include <linux/clk.h>
++#include <linux/debugfs.h>
++#include <linux/delay.h>
++#include <linux/gpio/consumer.h>
++#include <linux/regulator/consumer.h>
++#include <linux/dma-mapping.h>
++#include <linux/firmware/qcom/qcom_scm.h>
++#include <linux/firmware/qcom/qcom_tzmem.h>
++#include <linux/module.h>
++#include <linux/platform_device.h>
++#include <linux/slab.h>
++#include <linux/uaccess.h>
++#include <linux/vmalloc.h>
++
++#define OWNER_QSEE_OS	50
++#define SVC_APP_MGR	1
++#define MAX_IMG		(1024 * 1024)
++
++static unsigned int id_start = 0x01;
++module_param(id_start, uint, 0644);
++static unsigned int id_region = 0x05;
++module_param(id_region, uint, 0644);
++static unsigned int id_lib = 0x07;
++module_param(id_lib, uint, 0644);
++static ulong region_addr = 0x0e900000;
++module_param(region_addr, ulong, 0644);
++static ulong region_size = 0x01900000;
++module_param(region_size, ulong, 0644);
++/* argument types per call, 2 bits per argument: 0 VAL, 1 RO buf, 2 RW buf, 3 BUFVAL */
++static unsigned int types_start;
++module_param(types_start, uint, 0644);
++static unsigned int types_region;
++module_param(types_region, uint, 0644);
++static unsigned int types_lib;
++module_param(types_lib, uint, 0644);
++
++struct blob {
++	u8 *data;
++	size_t len;
++};
++
++struct op2_fpc {
++	struct device *dev;
++	struct regulator *vana;
++	struct clk *iface, *core;
++	struct gpio_desc *envdd, *fp2050, *rst;
++	bool powered;
++	struct dentry *dir;
++	struct qcom_tzmem_pool *pool;
++	struct blob lib, app;
++	void *keep[4];
++	dma_addr_t keep_dma[4];
++	size_t keep_len[4];
++	u32 app_id;
++	char log[512];
++	u8 rsp[256];
++	size_t rsp_len;
++};
++
++static void say(struct op2_fpc *f, const char *fmt, ...)
++{
++	va_list ap;
++
++	va_start(ap, fmt);
++	vscnprintf(f->log, sizeof(f->log), fmt, ap);
++	va_end(ap);
++	dev_info(f->dev, "%s\n", f->log);
++}
++
++static ssize_t blob_write(struct blob *b, const char __user *u, size_t n, loff_t *pos)
++{
++	if (*pos + n > MAX_IMG)
++		return -EFBIG;
++	if (!b->data) {
++		b->data = vzalloc(MAX_IMG);
++		if (!b->data)
++			return -ENOMEM;
++	}
++	if (copy_from_user(b->data + *pos, u, n))
++		return -EFAULT;
++	*pos += n;
++	if (*pos > b->len)
++		b->len = *pos;
++	return n;
++}
++
++static int lib_open(struct inode *i, struct file *fl)
++{
++	struct op2_fpc *f = i->i_private;
++
++	fl->private_data = f;
++	if (fl->f_flags & O_TRUNC)
++		f->lib.len = 0;
++	return 0;
++}
++static ssize_t lib_write(struct file *fl, const char __user *u, size_t n, loff_t *pos)
++{
++	struct op2_fpc *f = fl->private_data;
++
++	return blob_write(&f->lib, u, n, pos);
++}
++static const struct file_operations lib_fops = { .open = lib_open, .write = lib_write, .llseek = default_llseek };
++
++static int app_open(struct inode *i, struct file *fl)
++{
++	struct op2_fpc *f = i->i_private;
++
++	fl->private_data = f;
++	if (fl->f_flags & O_TRUNC)
++		f->app.len = 0;
++	return 0;
++}
++static ssize_t app_write(struct file *fl, const char __user *u, size_t n, loff_t *pos)
++{
++	struct op2_fpc *f = fl->private_data;
++
++	return blob_write(&f->app, u, n, pos);
++}
++static const struct file_operations app_fops = { .open = app_open, .write = app_write, .llseek = default_llseek };
++
++static int load_image(struct op2_fpc *f, struct blob *b, u32 mdt_len, u32 cmd, const char *what,
++		      int slot, u64 res[3])
++{
++	dma_addr_t dma;
++	void *buf;
++	u64 args[3];
++	int ret;
++
++	if (!b->len || mdt_len > b->len)
++		return -EINVAL;
++	buf = dma_alloc_coherent(f->dev, b->len, &dma, GFP_KERNEL);
++	if (!buf)
++		return -ENOMEM;
++	if (dma >> 32) {
++		dma_free_coherent(f->dev, b->len, buf, dma);
++		return -ERANGE;	/* the request carries a 32-bit address */
++	}
++	memcpy(buf, b->data, b->len);
++	f->keep[slot] = buf;
++	f->keep_dma[slot] = dma;
++	f->keep_len[slot] = b->len;
++	args[0] = mdt_len;
++	args[1] = b->len;
++	args[2] = dma;
++	dev_info(f->dev, "%s: mdt_len %u img_len %zu phys %pad cmd %#x\n", what, mdt_len, b->len, &dma, cmd);
++	ret = qcom_scm_qseecom_op2_call(OWNER_QSEE_OS, SVC_APP_MGR, cmd, args, 3,
++					cmd == id_start ? types_start : types_lib, res);
++	return ret;
++}
++
++static ssize_t ctl_write(struct file *fl, const char __user *u, size_t n, loff_t *pos)
++{
++	struct op2_fpc *f = fl->private_data;
++	char line[600], *p, *tok;
++	u64 res[3] = {};
++	u64 a[2];
++	int ret;
++	u32 mdt;
++
++	if (n >= sizeof(line))
++		return -E2BIG;
++	if (copy_from_user(line, u, n))
++		return -EFAULT;
++	line[n] = 0;
++	p = strim(line);
++	tok = strsep(&p, " ");
++
++	if (!strcmp(tok, "region")) {
++		a[0] = region_addr;
++		a[1] = region_size;
++		ret = qcom_scm_qseecom_op2_call(OWNER_QSEE_OS, SVC_APP_MGR, id_region, a, 2,
++						types_region, res);
++		say(f, "region %#lx+%#lx: ret %d result %llx type %llx data %llx", region_addr, region_size,
++		    ret, res[0], res[1], res[2]);
++	} else if (!strcmp(tok, "lib") || !strcmp(tok, "app")) {
++		bool lib = tok[0] == 'l';
++
++		if (!p || kstrtou32(p, 0, &mdt))
++			return -EINVAL;
++		ret = load_image(f, lib ? &f->lib : &f->app, mdt, lib ? id_lib : id_start,
++				 lib ? "lib" : "app", lib ? 0 : 1, res);
++		if (!lib && !ret && res[0] == 0 && res[1] == 0xEE01)
++			f->app_id = res[2];
++		say(f, "%s: ret %d result %llx type %llx data %llx (app_id %u)", tok, ret, res[0], res[1],
++		    res[2], f->app_id);
++	} else if (!strcmp(tok, "power")) {
++		/* sensor power as the stock fpc1020_tee: vdd_ana, 1V8 enable, fp2050, SPI clocks, reset pulse */
++		ret = f->vana ? regulator_enable(f->vana) : 0;
++		if (!ret && f->iface)
++			ret = clk_prepare_enable(f->iface);
++		if (!ret && f->core) {
++			clk_set_rate(f->core, 4800000);
++			ret = clk_prepare_enable(f->core);
++		}
++		if (f->envdd)
++			gpiod_set_value_cansleep(f->envdd, 1);
++		if (f->fp2050)
++			gpiod_set_value_cansleep(f->fp2050, 1);
++		msleep(10);
++		if (f->rst) {
++			gpiod_set_value_cansleep(f->rst, 1);	/* asserted = pin low */
++			msleep(5);
++			gpiod_set_value_cansleep(f->rst, 0);
++		}
++		msleep(20);
++		f->powered = !ret;
++		say(f, "power: ret %d vana %s iface %s core %s", ret, f->vana ? "y" : "-", f->iface ? "y" : "-",
++		    f->core ? "y" : "-");
++	} else if (!strcmp(tok, "send")) {
++		/* send <hex request bytes...> : req and rsp in TZ memory, response 256 bytes */
++		void *req, *rsp;
++		size_t rl = 0;
++		u8 req_b[64] = {};
++
++		while (p && (tok = strsep(&p, " ")) && rl < sizeof(req_b)) {
++			u8 b;
++
++			if (!*tok)
++				continue;
++			if (kstrtou8(tok, 16, &b))
++				return -EINVAL;
++			req_b[rl++] = b;
++		}
++		if (!f->app_id)
++			return -ENODEV;
++		req = qcom_tzmem_alloc(f->pool, 64, GFP_KERNEL);
++		rsp = qcom_tzmem_alloc(f->pool, 256, GFP_KERNEL);
++		if (!req || !rsp) {
++			if (req)
++				qcom_tzmem_free(req);
++			if (rsp)
++				qcom_tzmem_free(rsp);
++			return -ENOMEM;
++		}
++		memcpy(req, req_b, 64);
++		memset(rsp, 0, 256);
++		ret = qcom_scm_qseecom_app_send(f->app_id, req, 64, rsp, 256);
++		memcpy(f->rsp, rsp, 256);
++		f->rsp_len = 256;
++		qcom_tzmem_free(req);
++		qcom_tzmem_free(rsp);
++		say(f, "send cmd %02x%02x%02x%02x: ret %d", req_b[0], req_b[1], req_b[2], req_b[3], ret);
++	} else {
++		return -EINVAL;
++	}
++	return n;
++}
++
++static int ctl_open(struct inode *i, struct file *fl)
++{
++	fl->private_data = i->i_private;
++	return 0;
++}
++static const struct file_operations ctl_fops = { .open = ctl_open, .write = ctl_write };
++
++static ssize_t log_read(struct file *fl, char __user *u, size_t n, loff_t *pos)
++{
++	struct op2_fpc *f = fl->private_data;
++
++	return simple_read_from_buffer(u, n, pos, f->log, strlen(f->log));
++}
++static const struct file_operations log_fops = { .open = ctl_open, .read = log_read };
++
++static ssize_t rsp_read(struct file *fl, char __user *u, size_t n, loff_t *pos)
++{
++	struct op2_fpc *f = fl->private_data;
++
++	return simple_read_from_buffer(u, n, pos, f->rsp, f->rsp_len);
++}
++static const struct file_operations rsp_fops = { .open = ctl_open, .read = rsp_read };
++
++static int op2_fpc_probe(struct platform_device *pdev)
++{
++	struct qcom_tzmem_pool_config pc = { .initial_size = SZ_64K, .policy = QCOM_TZMEM_POLICY_STATIC };
++	struct op2_fpc *f;
++	int ret;
++
++	if (!qcom_scm_is_available())
++		return -EPROBE_DEFER;
++	f = devm_kzalloc(&pdev->dev, sizeof(*f), GFP_KERNEL);
++	if (!f)
++		return -ENOMEM;
++	f->dev = &pdev->dev;
++	ret = dma_set_mask_and_coherent(f->dev, DMA_BIT_MASK(32));
++	if (ret)
++		return ret;
++	f->vana = devm_regulator_get_optional(f->dev, "vdd-ana");
++	if (IS_ERR(f->vana))
++		f->vana = NULL;
++	f->iface = devm_clk_get_optional(f->dev, "iface");
++	f->core = devm_clk_get_optional(f->dev, "core");
++	if (IS_ERR(f->iface))
++		f->iface = NULL;
++	if (IS_ERR(f->core))
++		f->core = NULL;
++	f->envdd = devm_gpiod_get_optional(f->dev, "envdd", GPIOD_OUT_LOW);
++	f->fp2050 = devm_gpiod_get_optional(f->dev, "fp2050", GPIOD_OUT_LOW);
++	f->rst = devm_gpiod_get_optional(f->dev, "rst", GPIOD_OUT_LOW);
++	if (IS_ERR(f->envdd)) f->envdd = NULL;
++	if (IS_ERR(f->fp2050)) f->fp2050 = NULL;
++	if (IS_ERR(f->rst)) f->rst = NULL;
++	f->pool = devm_qcom_tzmem_pool_new(f->dev, &pc);
++	if (IS_ERR(f->pool))
++		return PTR_ERR(f->pool);
++	f->dir = debugfs_create_dir("op2-fpc-tz", NULL);
++	debugfs_create_file("lib.bin", 0200, f->dir, f, &lib_fops);
++	debugfs_create_file("app.bin", 0200, f->dir, f, &app_fops);
++	debugfs_create_file("ctl", 0200, f->dir, f, &ctl_fops);
++	debugfs_create_file("log", 0400, f->dir, f, &log_fops);
++	debugfs_create_file("rsp", 0400, f->dir, f, &rsp_fops);
++	platform_set_drvdata(pdev, f);
++	dev_info(f->dev, "ready: debugfs op2-fpc-tz (region %#lx+%#lx, ids start %#x region %#x lib %#x)\n",
++		 region_addr, region_size, id_start, id_region, id_lib);
++	return 0;
++}
++
++static const struct of_device_id op2_fpc_of[] = { { .compatible = "oneplus,op2-fpc-tz" }, { } };
++MODULE_DEVICE_TABLE(of, op2_fpc_of);
++
++static struct platform_driver op2_fpc_driver = {
++	.probe = op2_fpc_probe,
++	.driver = { .name = "op2-fpc-tz", .of_match_table = op2_fpc_of },
++};
++module_platform_driver(op2_fpc_driver);
++MODULE_DESCRIPTION("OnePlus 2 fingerprint TZ app bring-up (QSEECOM)");
++MODULE_LICENSE("GPL");

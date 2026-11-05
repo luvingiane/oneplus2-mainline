@@ -26,6 +26,19 @@
 	};
 };
 
+#ifndef OP2_WIFI
+&tlmm {
+	/* WL_EN (GPIO 113) of the QCA6174 combo: with OP2_BT alone the hog in
+	 * op2-wifi.dtsi is not compiled in — drive it here too. */
+	wlan-en-hog {
+		gpio-hog;
+		gpios = <113 GPIO_ACTIVE_HIGH>;
+		output-high;
+		line-name = "wlan-en";
+	};
+};
+#endif
+
 &pm8994_gpios {
 	bt_divclk_pin: bt-divclk-state {
 		pinconf {
@@ -45,6 +58,7 @@
 
 	bluetooth {
 		compatible = "qcom,qca6174-bt";
+		max-speed = <115200>;
 		enable-gpios = <&pm8994_gpios 19 GPIO_ACTIVE_HIGH>;
 		clocks = <&bt_divclk>;
 		/* loads qca/nvm_tlv_3.2.bin + qca/rampatch_tlv_3.2.tlv

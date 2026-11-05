@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# op2-shot <nomefile> — screenshot dello schermo di B in shots/<nomefile>.png
+# Via grim (wlr-screencopy su wayland-0): /dev/fb0 resta nero con ztmetro.
+# Se lo schermo è addormentato (conn=disabled) il ctl "screen on" non basta:
+# serve un modeset completo -> restart greetd, poi grim (retry).
+set -u
+cd "$(dirname "$0")/.."
+NAME=${1:-shot-$(date +%H%M)}
+SSH="timeout 40 bash scripts/op2-ssh"
+$SSH '
+  if [ "$(cat /sys/class/drm/card1-DSI-1/enabled)" != "enabled" ]; then
+    printf "screen on\n" > /run/user/1000/ztmetro.ctl
+    for i in $(seq 1 10); do sleep 1; [ "$(cat /sys/class/drm/card1-DSI-1/enabled)" = "enabled" ] && break; done
+  fi
+  if [ "$(cat /sys/class/drm/card1-DSI-1/enabled)" != "enabled" ]; then
+    systemctl restart greetd
+    for i in $(seq 1 15); do sleep 1; [ "$(cat /sys/class/drm/card1-DSI-1/enabled)" = "enabled" ] && break; done
+  fi
+  sleep 3
+  for i in 1 2 3 4 5; do
+    runuser -u zerone -- env XDG_RUNTIME_DIR=/run/user/1000 WAYLAND_DISPLAY=wayland-0 grim /tmp/op2-shot.png 2>/dev/null && break
+    sleep 2
+  done
+  ls -la /tmp/op2-shot.png' 2>/dev/null | tail -1
+timeout 30 scp -F keys/ssh_config op2:/tmp/op2-shot.png "shots/$NAME.png" || { echo "FAIL scp"; exit 1; }
+echo "shots/$NAME.png"

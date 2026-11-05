@@ -66,7 +66,12 @@ EOF
 printf 'root:x:0:0:root:/root:/bin/sh\n' > "$B/initramfs/passwd"
 printf 'root:x:0:\n' > "$B/initramfs/group"
 printf '/bin/sh\n' > "$B/initramfs/shells"
-cp "$ROOT/keys/op2_ed25519.pub" "$B/initramfs/authorized_keys"
+# authorized_keys: our key, plus (when the file exists) the read-only key of the AI agents,
+# restricted to the forced command /etc/op2-ro-shell (initramfs/op2-ro-shell)
+cat "$ROOT/keys/op2_ed25519.pub" > "$B/initramfs/authorized_keys"
+if [ -f "$ROOT/keys/op2a-ro_ed25519.pub" ]; then
+	printf 'command="/etc/op2-ro-shell",restrict %s\n' "$(cat "$ROOT/keys/op2a-ro_ed25519.pub")" >> "$B/initramfs/authorized_keys"
+fi
 [ -x "$B/dropbearmulti" ] || bash "$ROOT/scripts/build-dropbear.sh"
 LIST=$B/initramfs.list
 cat > "$LIST" <<EOF
@@ -98,6 +103,7 @@ file /etc/shells $B/initramfs/shells 0644 0 0
 dir /root 0700 0 0
 dir /root/.ssh 0700 0 0
 file /root/.ssh/authorized_keys $B/initramfs/authorized_keys 0600 0 0
+file /etc/op2-ro-shell $ROOT/initramfs/op2-ro-shell 0755 0 0
 file /pattern24.raw.gz $B/initramfs/pattern24.raw.gz 0644 0 0
 file /pattern32.raw.gz $B/initramfs/pattern32.raw.gz 0644 0 0
 EOF
@@ -110,6 +116,25 @@ dir /lib/firmware 0755 0 0
 dir /lib/firmware/qcom 0755 0 0
 file /lib/firmware/qcom/a420_pfp.fw $ROOT/firmware/qcom/a420_pfp.fw 0644 0 0
 file /lib/firmware/qcom/a420_pm4.fw $ROOT/firmware/qcom/a420_pm4.fw 0644 0 0
+EOF
+fi
+# QCA6174 Bluetooth firmware (hci_qca runs before the real rootfs is mounted); copied from the stock
+# /system/etc/firmware by hand, not tracked (firmware/qca/ is in .gitignore).
+if [ -e "$ROOT/firmware/qca/rampatch_tlv_3.2.tlv" ]; then cat >> "$LIST" <<EOF
+dir /lib/firmware/qca 0755 0 0
+file /lib/firmware/qca/rampatch_tlv_3.2.tlv $ROOT/firmware/qca/rampatch_tlv_3.2.tlv 0644 0 0
+file /lib/firmware/qca/nvm_tlv_3.2.bin $ROOT/firmware/qca/nvm_tlv_3.2.bin 0644 0 0
+EOF
+fi
+# QCA6174 Wi-Fi firmware (ath10k probes before the real rootfs is mounted: without these it waits ~2 min
+# for the sysfs fallback). Copied from B's rootfs, not tracked (firmware/ath10k/ is in .gitignore).
+if [ -e "$ROOT/firmware/ath10k/QCA6174/hw3.0/firmware-6.bin" ]; then cat >> "$LIST" <<EOF
+dir /lib/firmware/ath10k 0755 0 0
+dir /lib/firmware/ath10k/QCA6174 0755 0 0
+dir /lib/firmware/ath10k/QCA6174/hw3.0 0755 0 0
+file /lib/firmware/ath10k/QCA6174/hw3.0/firmware-6.bin $ROOT/firmware/ath10k/QCA6174/hw3.0/firmware-6.bin 0644 0 0
+file /lib/firmware/ath10k/QCA6174/hw3.0/board.bin $ROOT/firmware/ath10k/QCA6174/hw3.0/board.bin 0644 0 0
+file /lib/firmware/ath10k/QCA6174/hw3.0/board-2.bin $ROOT/firmware/ath10k/QCA6174/hw3.0/board-2.bin 0644 0 0
 EOF
 fi
 [ -x "$SRC/usr/gen_init_cpio" ] || make -C "$SRC" ARCH=arm64 usr/gen_init_cpio >/dev/null

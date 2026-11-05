@@ -1,0 +1,215 @@
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * CPU frequency scaling (cpufreq) for MSM8994 v2.x (OnePlus 2 = v2.1).
+ *
+ *  - clock_cpu: per-cluster PLLs (c0_pll/c1_pll) and alias muxes
+ *    (c0_mux/c1_mux), driven by drivers/clk/qcom/clk-cpu-8994.c
+ *    ("qcom,cpu-clock-8994-v2"). Register map from CAF
+ *    drivers/clk/qcom/clock-cpu-8994.c / msm8994.dtsi.
+ *  - OPP tables: V2 speedbin 0 frequencies from CAF
+ *    arch/arm/boot/dts/qcom/msm8994-v2.dtsi (qcom,a53-speedbin0-v0 /
+ *    qcom,a57-speedbin0-v0). All voltages are pinned to the CPR ceiling
+ *    (A53 1.18 V, A57 1.225 V) because mainline 7.3 has no CPR driver:
+ *    cpufreq-dt changes the clock, the rail stays at the safe maximum.
+ *  - cpu-supply: PM8994 S8 (A53, vdd-apc of apc0) / S11 (A57, vdd-apc of
+ *    apc1), defined in msm8994-oneplus-oneplus2.dts pinned always-on.
+ */
+
+#include <dt-bindings/clock/qcom,gcc-msm8994.h>
+
+&soc {
+	clock_cpu: clock-controller@f9015000 {
+		compatible = "qcom,cpu-clock-8994-v2";
+		reg = <0xf9015000 0x1000>,	/* c0_pll: A53 PLLs (pll0 @0x0, pll1 @0x40) */
+		      <0xf9016000 0x1000>,	/* c1_pll: A57 PLLs */
+		      <0xf900d000 0x1000>,	/* c0_mux: A53 alias mux (reg 0x54) */
+		      <0xf900f000 0x1000>,	/* c1_mux: A57 alias mux (reg 0x54) */
+		      <0xfc4b80b0 0x8>;		/* efuse: A57 speed bin = bits [2:0] */
+		reg-names = "c0_pll", "c1_pll", "c0_mux", "c1_mux", "efuse";
+		clock-names = "xo", "aux";
+		clocks = <&xo_board>, <&gcc GPLL0>;	/* aux = GPLL0 = 600 MHz */
+		#clock-cells = <1>;
+	};
+};
+
+&{/cpus} {
+	/* A53 cluster (cpu0-3), V2 speedbin 0, CAF msm8994-v2.dtsi */
+	cluster0_opp: opp-table-0 {
+		compatible = "operating-points-v2";
+
+		opp-384000000 {
+			opp-hz = /bits/ 64 <384000000>;
+			opp-microvolt = <1180000>;
+		};
+		opp-460800000 {
+			opp-hz = /bits/ 64 <460800000>;
+			opp-microvolt = <1180000>;
+		};
+		opp-600000000 {
+			opp-hz = /bits/ 64 <600000000>;
+			opp-microvolt = <1180000>;
+		};
+		opp-672000000 {
+			opp-hz = /bits/ 64 <672000000>;
+			opp-microvolt = <1180000>;
+		};
+		opp-768000000 {
+			opp-hz = /bits/ 64 <768000000>;
+			opp-microvolt = <1180000>;
+		};
+		opp-864000000 {
+			opp-hz = /bits/ 64 <864000000>;
+			opp-microvolt = <1180000>;
+		};
+		opp-960000000 {
+			opp-hz = /bits/ 64 <960000000>;
+			opp-microvolt = <1180000>;
+		};
+		opp-1248000000 {
+			opp-hz = /bits/ 64 <1248000000>;
+			opp-microvolt = <1180000>;
+		};
+		opp-1344000000 {
+			opp-hz = /bits/ 64 <1344000000>;
+			opp-microvolt = <1180000>;
+		};
+		opp-1478400000 {
+			opp-hz = /bits/ 64 <1478400000>;
+			opp-microvolt = <1180000>;
+		};
+		opp-1555200000 {
+			opp-hz = /bits/ 64 <1555200000>;
+			opp-microvolt = <1180000>;
+		};
+	};
+
+	/* A57 cluster (cpu4-7), V2 speedbin 0, CAF msm8994-v2.dtsi */
+	cluster1_opp: opp-table-1 {
+		compatible = "operating-points-v2";
+
+		opp-384000000 {
+			opp-hz = /bits/ 64 <384000000>;
+			opp-microvolt = <1225000>;
+		};
+		opp-480000000 {
+			opp-hz = /bits/ 64 <480000000>;
+			opp-microvolt = <1225000>;
+		};
+		opp-633600000 {
+			opp-hz = /bits/ 64 <633600000>;
+			opp-microvolt = <1225000>;
+		};
+		opp-768000000 {
+			opp-hz = /bits/ 64 <768000000>;
+			opp-microvolt = <1225000>;
+		};
+		opp-864000000 {
+			opp-hz = /bits/ 64 <864000000>;
+			opp-microvolt = <1225000>;
+		};
+		opp-960000000 {
+			opp-hz = /bits/ 64 <960000000>;
+			opp-microvolt = <1225000>;
+		};
+		opp-1248000000 {
+			opp-hz = /bits/ 64 <1248000000>;
+			opp-microvolt = <1225000>;
+		};
+		opp-1344000000 {
+			opp-hz = /bits/ 64 <1344000000>;
+			opp-microvolt = <1225000>;
+		};
+		opp-1440000000 {
+			opp-hz = /bits/ 64 <1440000000>;
+			opp-microvolt = <1225000>;
+		};
+		opp-1536000000 {
+			opp-hz = /bits/ 64 <1536000000>;
+			opp-microvolt = <1225000>;
+		};
+		opp-1632000000 {
+			opp-hz = /bits/ 64 <1632000000>;
+			opp-microvolt = <1225000>;
+		};
+		opp-1728000000 {
+			opp-hz = /bits/ 64 <1728000000>;
+			opp-microvolt = <1225000>;
+		};
+		opp-1824000000 {
+			opp-hz = /bits/ 64 <1824000000>;
+			opp-microvolt = <1225000>;
+		};
+		opp-1958400000 {
+			opp-hz = /bits/ 64 <1958400000>;
+			opp-microvolt = <1225000>;
+		};
+	};
+};
+
+/* the cores use the clock (cpufreq-dt) only with OP2_CPUFREQ_CPUS: probe the clock controller first */
+#ifdef OP2_CPUFREQ_CPUS
+&{/cpus/cpu@0} {
+	clocks = <&clock_cpu 0>;
+	operating-points-v2 = <&cluster0_opp>;
+#ifdef OP2_CPUFREQ_VREG
+	cpu-supply = <&pm8994_s8>;
+#endif
+	clock-latency-ns = <100000>;
+};
+&{/cpus/cpu@1} {
+	clocks = <&clock_cpu 0>;
+	operating-points-v2 = <&cluster0_opp>;
+#ifdef OP2_CPUFREQ_VREG
+	cpu-supply = <&pm8994_s8>;
+#endif
+	clock-latency-ns = <100000>;
+};
+&{/cpus/cpu@2} {
+	clocks = <&clock_cpu 0>;
+	operating-points-v2 = <&cluster0_opp>;
+#ifdef OP2_CPUFREQ_VREG
+	cpu-supply = <&pm8994_s8>;
+#endif
+	clock-latency-ns = <100000>;
+};
+&{/cpus/cpu@3} {
+	clocks = <&clock_cpu 0>;
+	operating-points-v2 = <&cluster0_opp>;
+#ifdef OP2_CPUFREQ_VREG
+	cpu-supply = <&pm8994_s8>;
+#endif
+	clock-latency-ns = <100000>;
+};
+&{/cpus/cpu@100} {
+	clocks = <&clock_cpu 1>;
+	operating-points-v2 = <&cluster1_opp>;
+#ifdef OP2_CPUFREQ_VREG
+	cpu-supply = <&pm8994_s11>;
+#endif
+	clock-latency-ns = <100000>;
+};
+&{/cpus/cpu@101} {
+	clocks = <&clock_cpu 1>;
+	operating-points-v2 = <&cluster1_opp>;
+#ifdef OP2_CPUFREQ_VREG
+	cpu-supply = <&pm8994_s11>;
+#endif
+	clock-latency-ns = <100000>;
+};
+&{/cpus/cpu@102} {
+	clocks = <&clock_cpu 1>;
+	operating-points-v2 = <&cluster1_opp>;
+#ifdef OP2_CPUFREQ_VREG
+	cpu-supply = <&pm8994_s11>;
+#endif
+	clock-latency-ns = <100000>;
+};
+&{/cpus/cpu@103} {
+	clocks = <&clock_cpu 1>;
+	operating-points-v2 = <&cluster1_opp>;
+#ifdef OP2_CPUFREQ_VREG
+	cpu-supply = <&pm8994_s11>;
+#endif
+	clock-latency-ns = <100000>;
+};
+#endif

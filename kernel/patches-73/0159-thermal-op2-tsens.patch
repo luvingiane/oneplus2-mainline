@@ -1,0 +1,198 @@
+--- a/drivers/thermal/qcom/Kconfig
++++ b/drivers/thermal/qcom/Kconfig
+@@ -65,3 +65,10 @@
+ 	  input from temperature and current sensors.  On many newer Qualcomm SoCs
+ 	  LMh is configured in the firmware and this feature need not be enabled.
+ 	  However, on certain SoCs like sdm845 LMh has to be configured from kernel.
++
++config OP2_TSENS
++	tristate "OnePlus 2 MSM8994 TSENS reader"
++	depends on THERMAL && OF
++	help
++	  Reads the 16 temperature sensors of the MSM8994 (already enabled by
++	  the bootloader) and registers one thermal zone per sensor.
+--- a/drivers/thermal/qcom/Makefile
++++ b/drivers/thermal/qcom/Makefile
+@@ -8,3 +8,4 @@
+ obj-$(CONFIG_QCOM_SPMI_MBG_TM) += qcom-spmi-mbg-tm.o
+ obj-$(CONFIG_QCOM_SPMI_TEMP_ALARM)	+= qcom-spmi-temp-alarm.o
+ obj-$(CONFIG_QCOM_LMH)		+= lmh.o
++obj-$(CONFIG_OP2_TSENS)	+= tsens-op2.o
+--- /dev/null
++++ b/drivers/thermal/qcom/tsens-op2.c
+@@ -0,0 +1,175 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * OnePlus 2 (MSM8994): minimal TSENS reader.
++ *
++ * Mainline has no TSENS support for MSM8994. The block (0xfc4a8000, 16
++ * sensors, "TSENS type 2": status at +0x1044 + 4*n, bit 14 = valid, code in
++ * bits 11:0) is already running when Linux starts. Calibration decode follows
++ * the downstream driver (research/lineage-kernel/drivers/thermal/msm8974-tsens.c
++ * tsens_calib_8994_sensors(), main fuse region only): fuse words at
++ * 0xfc4bc0d0/d4/d8, mode 3 = two points (30 and 120 degC), base0/base1 codes,
++ * per-sensor 4-bit offsets; degC = 30 + (code - (base0 + off)) * 90 / (base1 - base0).
++ *
++ * Not handled: the redundant fuse region (REDUN_SEL = 3) and alarm/IRQ
++ * thresholds. One thermal zone per sensor ("op2-tsensN").
++ */
++#include <linux/bitfield.h>
++#include <linux/io.h>
++#include <linux/module.h>
++#include <linux/of.h>
++#include <linux/platform_device.h>
++#include <linux/thermal.h>
++
++#define TSENS_NUM		16
++#define TSENS_STATUS(n)		(0x1044 + 4 * (n))
++#define TSENS_VALID		BIT(14)
++#define TSENS_CODE		GENMASK(11, 0)
++
++#define FUSE_CAL0		0xd0
++#define FUSE_CAL1		0xd4
++#define FUSE_CAL2		0xd8
++#define FUSE_REDUN_SEL		0x464
++#define REDUN_SEL_MASK		GENMASK(31, 29)
++#define REDUN_BACKUP		3
++#define CAL_MODE_MASK		GENMASK(22, 20)
++#define CAL_TWO_POINT		3
++#define BASE0_MASK		GENMASK(9, 0)
++#define BASE1_MASK		GENMASK(19, 10)
++
++struct op2_tsens;
++
++struct op2_tsens_sensor {
++	struct op2_tsens *tm;
++	struct thermal_zone_device *tz;
++	int id;
++	int off;	/* code at 30 degC = base0 + offset */
++};
++
++struct op2_tsens {
++	void __iomem *base;
++	int base0, base1;
++	bool calibrated;
++	struct op2_tsens_sensor s[TSENS_NUM];
++};
++
++static int op2_tsens_get_temp(struct thermal_zone_device *tz, int *temp)
++{
++	struct op2_tsens_sensor *s = thermal_zone_device_priv(tz);
++	struct op2_tsens *tm = s->tm;
++	u32 v = readl(tm->base + TSENS_STATUS(s->id));
++	int code, span;
++
++	if (!(v & TSENS_VALID))
++		return -EAGAIN;
++	code = FIELD_GET(TSENS_CODE, v);
++	span = tm->base1 - tm->base0;
++	if (span <= 0)
++		return -EINVAL;
++	/* 30 degC at (base0 + off), 120 degC at (base1 + off) */
++	*temp = 30000 + (code - (tm->base0 + s->off)) * 90000 / span;
++	return 0;
++}
++
++static const struct thermal_zone_device_ops op2_tsens_ops = {
++	.get_temp = op2_tsens_get_temp,
++};
++
++static int op2_tsens_calibrate(struct op2_tsens *tm, void __iomem *fuse)
++{
++	u32 c0, c1, c2, redun;
++	int i;
++
++	redun = FIELD_GET(REDUN_SEL_MASK, readl(fuse + FUSE_REDUN_SEL));
++	if (redun == REDUN_BACKUP)
++		return -EOPNOTSUPP;	/* redundant region not decoded */
++
++	c0 = readl(fuse + FUSE_CAL0);
++	c1 = readl(fuse + FUSE_CAL1);
++	c2 = readl(fuse + FUSE_CAL2);
++	if (FIELD_GET(CAL_MODE_MASK, c2) != CAL_TWO_POINT)
++		return -ENODATA;
++
++	tm->base0 = FIELD_GET(BASE0_MASK, c0);
++	tm->base1 = FIELD_GET(BASE1_MASK, c0);
++	/* sensors 0-2: c0[31:20], 3-10: c1, 11-15: c2[19:0], 4 bits each */
++	tm->s[0].off = (c0 >> 20) & 0xf;
++	tm->s[1].off = (c0 >> 24) & 0xf;
++	tm->s[2].off = (c0 >> 28) & 0xf;
++	for (i = 3; i <= 10; i++)
++		tm->s[i].off = (c1 >> (4 * (i - 3))) & 0xf;
++	for (i = 11; i <= 15; i++)
++		tm->s[i].off = (c2 >> (4 * (i - 11))) & 0xf;
++	return 0;
++}
++
++static int op2_tsens_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct op2_tsens *tm;
++	void __iomem *fuse;
++	struct resource *r;
++	char name[16];
++	int i, ret;
++
++	tm = devm_kzalloc(dev, sizeof(*tm), GFP_KERNEL);
++	if (!tm)
++		return -ENOMEM;
++	tm->base = devm_platform_ioremap_resource(pdev, 0);
++	if (IS_ERR(tm->base))
++		return PTR_ERR(tm->base);
++	r = platform_get_resource(pdev, IORESOURCE_MEM, 1);
++	if (!r)
++		return -EINVAL;
++	fuse = devm_ioremap(dev, r->start, resource_size(r));
++	if (!fuse)
++		return -ENOMEM;
++
++	ret = op2_tsens_calibrate(tm, fuse);
++	if (ret) {
++		/* downstream "calibration-less": 532 at 30 degC, 3.2 codes/degC */
++		dev_warn(dev, "no usable fuse calibration (%d): using default 532/820\n", ret);
++		tm->base0 = 532;
++		tm->base1 = 532 + 288;
++	}
++	dev_info(dev, "base0 %d (30C) base1 %d (120C), %d codes/90C\n",
++		 tm->base0, tm->base1, tm->base1 - tm->base0);
++
++	for (i = 0; i < TSENS_NUM; i++) {
++		tm->s[i].tm = tm;
++		tm->s[i].id = i;
++		snprintf(name, sizeof(name), "op2-tsens%d", i);
++		tm->s[i].tz = thermal_zone_device_register_with_trips(name, NULL, 0,
++				&tm->s[i], &op2_tsens_ops, NULL, 0, 0);
++		if (IS_ERR(tm->s[i].tz)) {
++			ret = PTR_ERR(tm->s[i].tz);
++			while (--i >= 0)
++				thermal_zone_device_unregister(tm->s[i].tz);
++			return ret;
++		}
++	}
++	platform_set_drvdata(pdev, tm);
++	return 0;
++}
++
++static void op2_tsens_remove(struct platform_device *pdev)
++{
++	struct op2_tsens *tm = platform_get_drvdata(pdev);
++	int i;
++
++	for (i = 0; i < TSENS_NUM; i++)
++		thermal_zone_device_unregister(tm->s[i].tz);
++}
++
++static const struct of_device_id op2_tsens_of[] = {
++	{ .compatible = "oneplus,op2-tsens" }, { }
++};
++MODULE_DEVICE_TABLE(of, op2_tsens_of);
++
++static struct platform_driver op2_tsens_driver = {
++	.probe = op2_tsens_probe,
++	.remove = op2_tsens_remove,
++	.driver = { .name = "op2-tsens", .of_match_table = op2_tsens_of },
++};
++module_platform_driver(op2_tsens_driver);
++MODULE_DESCRIPTION("OnePlus 2 MSM8994 TSENS reader");
++MODULE_LICENSE("GPL");

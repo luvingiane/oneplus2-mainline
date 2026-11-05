@@ -1,0 +1,29 @@
+--- a/drivers/pci/controller/dwc/pcie-qcom.c	2026-11-03 20:38:30.434334275 +0100
++++ b/drivers/pci/controller/dwc/pcie-qcom.c	2026-11-03 20:38:30.445868483 +0100
+@@ -54,6 +54,11 @@
+ #define PARF_PCS_SWING				0x38
+ #define PARF_PHY_CTRL				0x40
+ #define PARF_PHY_REFCLK				0x4c
++
++static bool op2_pcie_vdda_load;
++module_param_named(op2_pcie_vdda_load, op2_pcie_vdda_load, bool, 0644);
++MODULE_PARM_DESC(op2_pcie_vdda_load,
++	"op2 304: vote CAF vreg-0.9 settings on the host vdda (pm8994_l28): 1.0 V + optimum mode 40000 uA, as CAF msm_pcie_vreg_init does (pci-msm.c:2478-2533, table :576-580); default 0");
+ #define PARF_CONFIG_BITS			0x50
+ #define PARF_DBI_BASE_ADDR			0x168
+ #define PARF_SLV_ADDR_SPACE_SIZE		0x16c
+@@ -730,6 +735,14 @@
+ 	ret = qcom_pcie_init_1_0_0(pcie);
+ 	if (ret)
+ 		return ret;
++
++	if (op2_pcie_vdda_load) {
++		/* CAF msm_pcie_vreg_init (pci-msm.c:2496-2517): voltage and
++		 * optimum mode (load) on vreg-0.9 = this vdda */
++		regulator_set_voltage(res->vdda, 1000000, 1000000);
++		regulator_set_load(res->vdda, 40000);
++	}
++
+ 	/* the aux clock runs 5-7 ms after its enable (patch 0028) */
+ 	usleep_range(10000, 11000);
+ 

@@ -4,7 +4,8 @@ Subject: [PATCH] power: supply: OnePlus 2 PMI8994 minimal charger set-up and bat
 Bring-up stopgap: our kernel left the PMI8994 charger as LK left it, so a
 phone booted without LK setting it up never charged (CHGR_STS 0x80 with USB
 present). Write the set-up read from a charging phone at probe and report
-the fuel gauge SOC as /sys/class/power_supply/battery.
+the fuel gauge SOC as /sys/class/power_supply/battery. Later: voltage, current, temperature
+(fuel gauge SRAM, read-only), charge type, health, FULL status, design capacity and a "usb" supply.
 
 ---
 --- a/drivers/power/supply/Kconfig
@@ -29,10 +30,9 @@ the fuel gauge SOC as /sys/class/power_supply/battery.
  obj-$(CONFIG_FUEL_GAUGE_MM8013)	+= mm8013.o
  obj-$(CONFIG_MACSMC_POWER)	+= macsmc-power.o
  obj-$(CONFIG_CHARGER_MAX77759)	+= max77759_charger.o
-+obj-$(CONFIG_BATTERY_OP2)	+= op2-battery.o
 --- /dev/null
 +++ b/drivers/power/supply/op2-battery.c
-@@ -0,0 +1,150 @@
+@@ -0,0 +1,384 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * OnePlus 2 (PMI8994) minimal charger set-up and battery report.
@@ -47,11 +47,23 @@ the fuel gauge SOC as /sys/class/power_supply/battery.
 + *                 (EN_BAT_CHG, active low)
 + *   USBIN 0x1300: RT_STS 0x10, CMD_IL 0x40, IL_CFG 0xf2 (sec)
 + *   FG    0x4000: SOC_MONOTONIC 0x09 (0..255)
++ *   FG MEM 0x4400: SRAM interface (CFG 0x40 bit7 ACCESS_REQ, CTL 0x41, ADDR 0x42/0x43,
++ *                 RD_DATA0 0x4c, INT_RT_STS 0x10 bit0 MEM_AVAIL). Read-only use, same
++ *                 sequence as qpnp-fg.c fg_mem_read(): request, wait MEM_AVAIL, set the
++ *                 word address, read, release. SRAM words (CAF fg_data[]): VOLTAGE
++ *                 0x5cc+1, CURRENT 0x5cc+3, BATT_TEMP 0x550+2, OCV 0x588+3, all 16 bit;
++ *                 u16 * 152587 / 1000 = uV (current: signed, uA); temp = u16 * 625 / 1000
++ *                 deci-Kelvin.
++ *   CHGR RT_STS 0x1010: BAT_TCC_REACHED b7, CHG_INHIBIT b1 (both = full);
++ *   CHGR_STS b3 CHG_HOLD_OFF; BATIF RT_STS 0x1210: HOT_HARD b0 HOT_SOFT b1 COLD_HARD b2
++ *                 COLD_SOFT b3 OV b4 LOW b5 MISSING b6.
 + *   "sec" registers need 0xa5 written to the peripheral's 0xd0 first.
 + * Init writes come from DT: oneplus,init-regs = <addr value sec ...>.
 + */
 +
++#include <linux/delay.h>
 +#include <linux/module.h>
++#include <linux/mutex.h>
 +#include <linux/of.h>
 +#include <linux/platform_device.h>
 +#include <linux/power_supply.h>
@@ -62,10 +74,29 @@ the fuel gauge SOC as /sys/class/power_supply/battery.
 +#define USBIN_RT_STS	0x1310
 +#define FG_SOC		0x4009
 +#define SEC_ACCESS	0xd0
++#define CHGR_RT_STS	0x1010
++#define BATIF_RT_STS	0x1210
++#define FGM_RT_STS	0x4410
++#define FGM_CFG		0x4440
++#define FGM_CTL		0x4441
++#define FGM_ADDR	0x4442
++#define FGM_RD0		0x444c
++#define FGM_ACCESS_REQ	BIT(7)
++#define FGM_MEM_AVAIL	BIT(0)
++#define SRAM_BATT_TEMP	0x550
++#define SRAM_OCV	0x588
++#define SRAM_VOLTAGE_I	0x5cc
 +
 +struct op2_bat {
 +	struct regmap *map;
 +	struct power_supply *psy;
++	struct power_supply *usb;
++	struct mutex sram_lock;
++	u32 design_uah;
++	/* SRAM snapshot: one access per refresh, reused for 2 s (the FG grants access slowly) */
++	unsigned long sram_ts, sram_fail_ts;
++	bool sram_valid;
++	int volt_uv, ocv_uv, cur_ua, temp_dc;
 +};
 +
 +static int rd(struct op2_bat *b, unsigned int reg)
@@ -74,6 +105,123 @@ the fuel gauge SOC as /sys/class/power_supply/battery.
 +
 +	return regmap_read(b->map, reg, &v) ? -EIO : v;
 +}
++
++/* One 16-bit value at word address `addr`, byte offset 0..3: at offset 3 the high byte is byte 0 of the
++ * next word (CAF qpnp-fg.c fg_mem_read() sets the address again for the next word). Access already granted. */
++static int sram_word16(struct op2_bat *b, unsigned int addr, unsigned int off)
++{
++	unsigned int lo, hi;
++	u8 a[2] = { addr & 0xff, addr >> 8 };
++
++	if (regmap_write(b->map, FGM_CTL, 0) ||
++	    regmap_bulk_write(b->map, FGM_ADDR, a, 2) ||
++	    regmap_read(b->map, FGM_RD0 + off, &lo))
++		return -EIO;
++	if (off < 3) {
++		if (regmap_read(b->map, FGM_RD0 + off + 1, &hi))
++			return -EIO;
++	} else {
++		addr += 4;
++		a[0] = addr & 0xff;
++		a[1] = addr >> 8;
++		if (regmap_bulk_write(b->map, FGM_ADDR, a, 2) ||
++		    regmap_read(b->map, FGM_RD0, &hi))
++			return -EIO;
++	}
++	return (hi << 8) | lo;
++}
++
++/* Refresh the SRAM snapshot: request access, read voltage/current/OCV/temperature, release. */
++static int sram_refresh(struct op2_bat *b)
++{
++	unsigned int sts = 0;
++	int i, v, ret = -ETIMEDOUT;
++
++	mutex_lock(&b->sram_lock);
++	if (b->sram_valid && time_before(jiffies, b->sram_ts + 2 * HZ)) {
++		ret = 0;
++		goto out;
++	}
++	/* the FG did not answer a moment ago: do not wait again for a second */
++	if (b->sram_fail_ts && time_before(jiffies, b->sram_fail_ts + HZ)) {
++		ret = b->sram_valid ? 0 : -EAGAIN;
++		goto out;
++	}
++	if (regmap_update_bits(b->map, FGM_CFG, FGM_ACCESS_REQ, FGM_ACCESS_REQ)) {
++		ret = -EIO;
++		goto out;
++	}
++	for (i = 0; i < 100; i++) {
++		if (!regmap_read(b->map, FGM_RT_STS, &sts) && (sts & FGM_MEM_AVAIL))
++			break;
++		usleep_range(1000, 2000);
++	}
++	if (!(sts & FGM_MEM_AVAIL)) {
++		b->sram_fail_ts = jiffies ? jiffies : 1;
++		ret = b->sram_valid ? 0 : -ETIMEDOUT;
++		goto release;
++	}
++	ret = -EIO;
++	v = sram_word16(b, SRAM_VOLTAGE_I, 1);
++	if (v < 0)
++		goto release;
++	b->volt_uv = div_u64((u64)v * 152587, 1000);
++	v = sram_word16(b, SRAM_VOLTAGE_I, 3);
++	if (v < 0)
++		goto release;
++	/* signed, uA; CAF sign convention (qpnp-fg.c get_sram_prop_now) */
++	b->cur_ua = div_s64((s64)(s16)v * 152587, 1000);
++	v = sram_word16(b, SRAM_OCV, 3);
++	if (v < 0)
++		goto release;
++	b->ocv_uv = div_u64((u64)v * 152587, 1000);
++	v = sram_word16(b, SRAM_BATT_TEMP, 2);
++	if (v < 0)
++		goto release;
++	/* CAF: temp = u16 * 625 / 1000 - 2730 (deci-degC) */
++	b->temp_dc = (int)(v * 625 / 1000) - 2730;
++	b->sram_ts = jiffies;
++	b->sram_fail_ts = 0;
++	b->sram_valid = true;
++	ret = 0;
++release:
++	regmap_update_bits(b->map, FGM_CFG, FGM_ACCESS_REQ, 0);
++out:
++	mutex_unlock(&b->sram_lock);
++	return ret;
++}
++
++static bool usb_present(struct op2_bat *b)
++{
++	return rd(b, USBIN_RT_STS) > 0 && (rd(b, USBIN_RT_STS) & BIT(2));
++}
++
++static int op2_usb_get(struct power_supply *psy, enum power_supply_property p,
++		       union power_supply_propval *val)
++{
++	struct op2_bat *b = power_supply_get_drvdata(psy);
++
++	switch (p) {
++	case POWER_SUPPLY_PROP_ONLINE:
++		val->intval = usb_present(b);
++		break;
++	default:
++		return -EINVAL;
++	}
++	return 0;
++}
++
++static const enum power_supply_property op2_usb_props[] = {
++	POWER_SUPPLY_PROP_ONLINE,
++};
++
++static const struct power_supply_desc op2_usb_desc = {
++	.name = "usb",
++	.type = POWER_SUPPLY_TYPE_USB,
++	.properties = op2_usb_props,
++	.num_properties = ARRAY_SIZE(op2_usb_props),
++	.get_property = op2_usb_get,
++};
 +
 +static int op2_bat_get(struct power_supply *psy, enum power_supply_property p,
 +		       union power_supply_propval *val)
@@ -98,12 +246,84 @@ the fuel gauge SOC as /sys/class/power_supply/battery.
 +		v = rd(b, CHGR_STS);
 +		if (v < 0)
 +			return v;
-+		if ((v >> 1) & 0x3)
-+			val->intval = POWER_SUPPLY_STATUS_CHARGING;
-+		else if ((rd(b, USBIN_RT_STS) & BIT(2)) > 0)
-+			val->intval = POWER_SUPPLY_STATUS_NOT_CHARGING;
-+		else
++		if (!usb_present(b)) {
 +			val->intval = POWER_SUPPLY_STATUS_DISCHARGING;
++		} else if (rd(b, CHGR_RT_STS) & (BIT(7) | BIT(1))) {
++			val->intval = POWER_SUPPLY_STATUS_FULL;
++		} else if (v & BIT(3)) {
++			val->intval = POWER_SUPPLY_STATUS_NOT_CHARGING;
++		} else if ((v >> 1) & 0x3) {
++			val->intval = POWER_SUPPLY_STATUS_CHARGING;
++		} else {
++			val->intval = POWER_SUPPLY_STATUS_NOT_CHARGING;
++		}
++		break;
++	case POWER_SUPPLY_PROP_CHARGE_TYPE:
++		v = rd(b, CHGR_STS);
++		if (v < 0)
++			return v;
++		switch ((v >> 1) & 0x3) {
++		case 1:
++			val->intval = POWER_SUPPLY_CHARGE_TYPE_TRICKLE;
++			break;
++		case 2:
++			val->intval = POWER_SUPPLY_CHARGE_TYPE_FAST;
++			break;
++		case 3:
++			val->intval = POWER_SUPPLY_CHARGE_TYPE_STANDARD;	/* CV taper: no TAPER type in 7.3 */
++			break;
++		default:
++			val->intval = POWER_SUPPLY_CHARGE_TYPE_NONE;
++		}
++		break;
++	case POWER_SUPPLY_PROP_HEALTH:
++		v = rd(b, BATIF_RT_STS);
++		if (v < 0)
++			return v;
++		if (v & BIT(6))
++			val->intval = POWER_SUPPLY_HEALTH_UNSPEC_FAILURE;
++		else if (v & BIT(4))
++			val->intval = POWER_SUPPLY_HEALTH_OVERVOLTAGE;
++		else if (v & BIT(0))
++			val->intval = POWER_SUPPLY_HEALTH_OVERHEAT;
++		else if (v & BIT(2))
++			val->intval = POWER_SUPPLY_HEALTH_COLD;
++		else if (v & BIT(1))
++			val->intval = POWER_SUPPLY_HEALTH_WARM;
++		else if (v & BIT(3))
++			val->intval = POWER_SUPPLY_HEALTH_COOL;
++		else
++			val->intval = POWER_SUPPLY_HEALTH_GOOD;
++		break;
++	case POWER_SUPPLY_PROP_TECHNOLOGY:
++		val->intval = POWER_SUPPLY_TECHNOLOGY_LION;
++		break;
++	case POWER_SUPPLY_PROP_VOLTAGE_NOW:
++		v = sram_refresh(b);
++		if (v < 0)
++			return v;
++		val->intval = b->volt_uv;
++		break;
++	case POWER_SUPPLY_PROP_VOLTAGE_OCV:
++		v = sram_refresh(b);
++		if (v < 0)
++			return v;
++		val->intval = b->ocv_uv;
++		break;
++	case POWER_SUPPLY_PROP_CURRENT_NOW:
++		v = sram_refresh(b);
++		if (v < 0)
++			return v;
++		val->intval = b->cur_ua;
++		break;
++	case POWER_SUPPLY_PROP_TEMP:
++		v = sram_refresh(b);
++		if (v < 0)
++			return v;
++		val->intval = b->temp_dc;
++		break;
++	case POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN:
++		val->intval = b->design_uah;
 +		break;
 +	default:
 +		return -EINVAL;
@@ -115,6 +335,14 @@ the fuel gauge SOC as /sys/class/power_supply/battery.
 +	POWER_SUPPLY_PROP_STATUS,
 +	POWER_SUPPLY_PROP_PRESENT,
 +	POWER_SUPPLY_PROP_CAPACITY,
++	POWER_SUPPLY_PROP_CHARGE_TYPE,
++	POWER_SUPPLY_PROP_HEALTH,
++	POWER_SUPPLY_PROP_TECHNOLOGY,
++	POWER_SUPPLY_PROP_VOLTAGE_NOW,
++	POWER_SUPPLY_PROP_VOLTAGE_OCV,
++	POWER_SUPPLY_PROP_CURRENT_NOW,
++	POWER_SUPPLY_PROP_TEMP,
++	POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN,
 +};
 +
 +static const struct power_supply_desc op2_bat_desc = {
@@ -136,6 +364,9 @@ the fuel gauge SOC as /sys/class/power_supply/battery.
 +	b = devm_kzalloc(dev, sizeof(*b), GFP_KERNEL);
 +	if (!b)
 +		return -ENOMEM;
++	mutex_init(&b->sram_lock);
++	b->design_uah = 3300000;
++	of_property_read_u32(dev->of_node, "charge-full-design-microamp-hours", &b->design_uah);
 +	b->map = dev_get_regmap(dev->parent, NULL);
 +	if (!b->map)
 +		return dev_err_probe(dev, -ENODEV, "no PMIC regmap\n");
@@ -161,6 +392,9 @@ the fuel gauge SOC as /sys/class/power_supply/battery.
 +	b->psy = devm_power_supply_register(dev, &op2_bat_desc, &cfg);
 +	if (IS_ERR(b->psy))
 +		return PTR_ERR(b->psy);
++	b->usb = devm_power_supply_register(dev, &op2_usb_desc, &cfg);
++	if (IS_ERR(b->usb))
++		return PTR_ERR(b->usb);
 +	dev_info(dev, "battery %d%%, CHGR_STS %#x\n",
 +		 DIV_ROUND_CLOSEST(rd(b, FG_SOC) * 100, 255), rd(b, CHGR_STS));
 +	return 0;

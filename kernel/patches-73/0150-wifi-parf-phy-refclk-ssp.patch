@@ -1,0 +1,29 @@
+--- a/drivers/pci/controller/dwc/pcie-qcom.c
++++ b/drivers/pci/controller/dwc/pcie-qcom.c
+@@ -42,6 +42,11 @@
+ #include "pcie-designware.h"
+ #include "pcie-qcom-common.h"
+ 
++static bool op2_pcie_refclk_ssp;
++module_param_named(op2_pcie_refclk_ssp, op2_pcie_refclk_ssp, bool, 0644);
++MODULE_PARM_DESC(op2_pcie_refclk_ssp,
++	"op2 273-02: set PARF_PHY_REFCLK SSP_EN (BIT16) before the PHY init, as mainline 2.1.0 does (pcie-qcom.c:592-597); CAF 8994 never writes PARF_PHY_REFCLK");
++
+ /* PARF registers */
+ #define PARF_SYS_CTRL				0x00
+ #define PARF_PM_CTRL				0x20
+@@ -739,6 +744,14 @@
+ 	val &= ~PHY_TEST_PWR_DOWN;
+ 	writel(val, pcie->parf + PARF_PHY_CTRL);
+ 
++	/* op2 273-02: enable the refclk path into the PHY (mainline 2.1.0,
++	 * pcie-qcom.c:592-597); CAF 8994 never writes PARF_PHY_REFCLK */
++	if (op2_pcie_refclk_ssp) {
++		val = readl(pcie->parf + PARF_PHY_REFCLK);
++		val |= PHY_REFCLK_SSP_EN;
++		writel(val, pcie->parf + PARF_PHY_REFCLK);
++	}
++
+ 	/* CAF value for this controller */
+ 	writel(0x365e, pcie->parf + PARF_SYS_CTRL);
+ 

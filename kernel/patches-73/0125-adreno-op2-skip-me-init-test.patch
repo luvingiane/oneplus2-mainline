@@ -1,8 +1,8 @@
 --- a/drivers/gpu/drm/msm/adreno/a4xx_gpu.c
 +++ b/drivers/gpu/drm/msm/adreno/a4xx_gpu.c
 @@ -371,7 +371,11 @@
- 	gpu_write(gpu, REG_A4XX_RBBM_INT_0_MASK, 0);
- 	pr_info("op2dbg: hw_init INT_0_MASK=0 (irqs off)\n");
+ 	gpu_write(gpu, REG_A4XX_RBBM_INT_0_MASK, A4XX_INT0_MASK);
+ 	pr_info("op2dbg: hw_init INT_0_MASK on (irqs enabled)\n");
  
 -	ret = a4xx_me_init(gpu) ? 0 : -EINVAL;
 +	/* TEST s124: skip ME init entirely — if the post-hw_init bus wedge

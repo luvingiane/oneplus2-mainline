@@ -1,0 +1,28 @@
+--- a/drivers/phy/qualcomm/phy-qcom-pcie-msm8994.c
++++ b/drivers/phy/qualcomm/phy-qcom-pcie-msm8994.c
+@@ -95,11 +95,25 @@
+ 	struct reset_control *pipe_reset;	/* optional */
+ };
+ 
++static bool op2_pcie_vreg_vote;
++module_param_named(op2_pcie_vreg_vote, op2_pcie_vreg_vote, bool, 0644);
++MODULE_PARM_DESC(op2_pcie_vreg_vote,
++	"op2 273-03: vote voltage+load on vdda-phy/vdda-pll as CAF msm_pcie_vreg_init does (pci-msm.c:2478-2533, defaults table :576-580)");
++
+ static int msm8994_pcie_phy_init(struct phy *phy)
+ {
+ 	struct msm8994_pcie_phy *qphy = phy_get_drvdata(phy);
+ 	int ret;
+ 
++	if (op2_pcie_vreg_vote) {
++		/* vdda-phy = vreg-0.9 (pm8994_l28): 1.0 V, 40000 uA;
++		 * vdda-pll = vreg-1.8 (pm8994_l12): 1.8 V, 14000 uA */
++		regulator_set_voltage(qphy->vregs[0].consumer, 1000000, 1000000);
++		regulator_set_voltage(qphy->vregs[1].consumer, 1800000, 1800000);
++		regulator_set_load(qphy->vregs[0].consumer, 40000);
++		regulator_set_load(qphy->vregs[1].consumer, 14000);
++	}
++
+ 	ret = regulator_bulk_enable(ARRAY_SIZE(qphy->vregs), qphy->vregs);
+ 	if (ret)
+ 		return ret;

@@ -1,0 +1,31 @@
+--- a/drivers/pci/controller/dwc/pcie-qcom.c	2026-11-03 20:38:24.333322188 +0100
++++ b/drivers/pci/controller/dwc/pcie-qcom.c	2026-11-03 20:38:24.345189042 +0100
+@@ -47,6 +47,11 @@
+ MODULE_PARM_DESC(op2_pcie_refclk_ssp,
+ 	"op2 273-02: set PARF_PHY_REFCLK SSP_EN (BIT16) before the PHY init, as mainline 2.1.0 does (pcie-qcom.c:592-597); CAF 8994 never writes PARF_PHY_REFCLK");
+ 
++static bool op2_pcie_refclk_full;
++module_param_named(op2_pcie_refclk_full, op2_pcie_refclk_full, bool, 0644);
++MODULE_PARM_DESC(op2_pcie_refclk_full,
++	"op2 304: full mainline 2.1.0 PARF_PHY_REFCLK write before the PHY table: clear USE_PAD, set SSP_EN, then wait 1-1.5 ms for clock acquisition (pcie-qcom.c.orig:591-603); default 0");
++
+ /* PARF registers */
+ #define PARF_SYS_CTRL				0x00
+ #define PARF_PM_CTRL				0x20
+@@ -752,6 +757,16 @@
+ 		writel(val, pcie->parf + PARF_PHY_REFCLK);
+ 	}
+ 
++	if (op2_pcie_refclk_full) {
++		/* mainline 2.1.0 block (pcie-qcom.c.orig:591-603): USE_PAD is
++		 * required only for ipq806x, then wait for clock acquisition */
++		val = readl(pcie->parf + PARF_PHY_REFCLK);
++		val &= ~PHY_REFCLK_USE_PAD;
++		val |= PHY_REFCLK_SSP_EN;
++		writel(val, pcie->parf + PARF_PHY_REFCLK);
++		usleep_range(1000, 1500);
++	}
++
+ 	/* CAF value for this controller */
+ 	writel(0x365e, pcie->parf + PARF_SYS_CTRL);
+ 

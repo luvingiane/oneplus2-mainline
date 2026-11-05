@@ -1,0 +1,219 @@
+--- a/drivers/pci/controller/dwc/pcie-qcom.c
++++ b/drivers/pci/controller/dwc/pcie-qcom.c
+@@ -47,6 +47,9 @@
+ MODULE_PARM_DESC(op2_pcie_refclk_ssp,
+ 	"op2 273-02: set PARF_PHY_REFCLK SSP_EN (BIT16) before the PHY init, as mainline 2.1.0 does (pcie-qcom.c:592-597); CAF 8994 never writes PARF_PHY_REFCLK");
+ 
++static int op2_pcie_stage;	/* op2 0165: stop init_msm8994 after step N (bisecting a hang), 0 = run all */
++module_param_named(op2_pcie_stage, op2_pcie_stage, int, 0644);
++
+ static bool op2_pcie_refclk_pad;
+ module_param_named(op2_pcie_refclk_pad, op2_pcie_refclk_pad, bool, 0644);
+ MODULE_PARM_DESC(op2_pcie_refclk_pad,
+@@ -745,6 +748,10 @@
+ 	ret = qcom_pcie_init_1_0_0(pcie);
+ 	if (ret)
+ 		return ret;
++	if (op2_pcie_stage == 1) {
++		dev_info(pcie->pci->dev, "op2dbg stop at stage 1\n");
++		return -EBUSY;
++	}
+ 
+ 	if (op2_pcie_vdda_load) {
+ 		/* CAF msm_pcie_vreg_init (pci-msm.c:2496-2517): voltage and
+@@ -761,11 +768,19 @@
+ 	if (!of_property_read_u32(pcie->pci->dev->of_node, "qcom,scm-dev-id", &val))
+ 		dev_info(pcie->pci->dev, "TZ restore_sec_cfg(%u): %d\n", val,
+ 			 qcom_scm_restore_sec_cfg(val, 0));
++	if (op2_pcie_stage == 2) {
++		dev_info(pcie->pci->dev, "op2dbg stop at stage 2\n");
++		return -EBUSY;
++	}
+ 
+ 	/* PHY power on (CAF: PARF_PHY_CTRL bit 0 cleared before PHY init) */
+ 	val = readl(pcie->parf + PARF_PHY_CTRL);
+ 	val &= ~PHY_TEST_PWR_DOWN;
+ 	writel(val, pcie->parf + PARF_PHY_CTRL);
++	if (op2_pcie_stage == 3) {
++		dev_info(pcie->pci->dev, "op2dbg stop at stage 3\n");
++		return -EBUSY;
++	}
+ 
+ 	/* op2 273-02: enable the refclk path into the PHY (mainline 2.1.0,
+ 	 * pcie-qcom.c:592-597); CAF 8994 never writes PARF_PHY_REFCLK */
+@@ -798,11 +813,28 @@
+ 
+ 	/* CAF value for this controller */
+ 	writel(0x365e, pcie->parf + PARF_SYS_CTRL);
++	if (op2_pcie_stage == 4) {
++		dev_info(pcie->pci->dev, "op2dbg stop at stage 4\n");
++		return -EBUSY;
++	}
+ 
+ 	/* CAF msm_pcie_enable (pci-msm.c:3293-3299), before the PHY: DBI at
+ 	 * offset 0, 16 MiB slave address space */
+ 	writel(0, pcie->parf + PARF_DBI_BASE_ADDR);
+-	writel(SZ_16M, pcie->parf + PARF_SLV_ADDR_SPACE_SIZE);
++	/* CAF msm_pcie_enable (pci-msm.c:3300-3302): only when the memory window is larger than 8 MiB
++	 * (pcie0: 13 MiB). PCIe1 (7 MiB bars + 512 KiB io + config) must NOT get the 16 MiB window:
++	 * it would overlap the SoC peripherals right after it (0xf9000000: GIC...) and hang the bus. */
++	{
++		u32 dom = 0;
++
++		of_property_read_u32(pcie->pci->dev->of_node, "linux,pci-domain", &dom);
++		if (dom == 0)
++			writel(SZ_16M, pcie->parf + PARF_SLV_ADDR_SPACE_SIZE);
++	}
++	if (op2_pcie_stage == 5) {
++		dev_info(pcie->pci->dev, "op2dbg stop at stage 5\n");
++		return -EBUSY;
++	}
+ 
+ 	return 0;
+ }
+@@ -823,6 +855,27 @@
+ 	return 0;
+ }
+ 
++/*
++ * MSM8994: like qcom_pcie_post_init_1_0_0() but without qcom_pcie_configure_dbi_base(): that one
++ * programs PARF_DBI_BASE_ADDR with the DBI physical address and a 2 GiB slave window
++ * (SLV_ADDR_SPACE_SZ), which on PCIe1 (DBI at 0xf8800000) covers the SoC peripherals (GIC at
++ * 0xf9000000...) and hangs the machine. CAF programs DBI base 0 and, for PCIe0 only, 16 MiB
++ * (init_msm8994 above).
++ */
++static int qcom_pcie_post_init_msm8994(struct qcom_pcie *pcie)
++{
++	if (IS_ENABLED(CONFIG_PCI_MSI)) {
++		u32 val = readl(pcie->parf + PARF_AXI_MSTR_WR_ADDR_HALT);
++
++		val |= EN;
++		writel(val, pcie->parf + PARF_AXI_MSTR_WR_ADDR_HALT);
++	}
++
++	qcom_pcie_set_slot_cap(pcie->pci);
++
++	return 0;
++}
++
+ static void qcom_pcie_2_3_2_ltssm_enable(struct qcom_pcie *pcie)
+ {
+ 	u32 val;
+@@ -1531,6 +1584,11 @@
+ 	ret = qcom_pcie_phy_power_on(pcie);
+ 	if (ret)
+ 		goto err_deinit;
++	if (op2_pcie_stage == 6) {
++		dev_info(pcie->pci->dev, "op2dbg stop at stage 6\n");
++		ret = -EBUSY;
++		goto err_disable_phy;
++	}
+ 
+ 	if (!pci->suspended) {
+ 		ret = pci_pwrctrl_create_devices(pci->dev);
+@@ -1549,14 +1607,29 @@
+ 		if (ret)
+ 			goto err_pwrctrl_power_off;
+ 	}
++	if (op2_pcie_stage == 7) {
++		dev_info(pcie->pci->dev, "op2dbg stop at stage 7\n");
++		ret = -EBUSY;
++		goto err_pwrctrl_power_off;
++	}
+ 
+ 	qcom_pcie_clear_aspm_l0s(pcie->pci);
+ 	dw_pcie_remove_capability(pcie->pci, PCI_CAP_ID_MSIX);
+ 	dw_pcie_remove_ext_capability(pcie->pci, PCI_EXT_CAP_ID_DPC);
+ 
+ 	qcom_pcie_configure_ports(pcie);
++	if (op2_pcie_stage == 8) {
++		dev_info(pcie->pci->dev, "op2dbg stop at stage 8\n");
++		ret = -EBUSY;
++		goto err_pwrctrl_power_off;
++	}
+ 
+ 	qcom_pcie_perst_deassert(pcie);
++	if (op2_pcie_stage == 9) {
++		dev_info(pcie->pci->dev, "op2dbg stop at stage 9\n");
++		ret = -EBUSY;
++		goto err_assert_reset;
++	}
+ 
+ 	if (pcie->cfg->ops->config_sid) {
+ 		ret = pcie->cfg->ops->config_sid(pcie);
+@@ -1663,7 +1736,7 @@
+ static const struct qcom_pcie_ops ops_msm8994 = {
+ 	.get_resources = qcom_pcie_get_resources_msm8994,
+ 	.init = qcom_pcie_init_msm8994,
+-	.post_init = qcom_pcie_post_init_1_0_0,
++	.post_init = qcom_pcie_post_init_msm8994,
+ 	.deinit = qcom_pcie_deinit_1_0_0,
+ 	.ltssm_enable = qcom_pcie_2_3_2_ltssm_enable,
+ };
+--- a/drivers/phy/qualcomm/phy-qcom-pcie-msm8994.c
++++ b/drivers/phy/qualcomm/phy-qcom-pcie-msm8994.c
+@@ -159,6 +159,9 @@
+ MODULE_PARM_DESC(op2_pcie_pipe_rst_early,
+ 	"op2 304: deassert the pipe-side PHY BCR (GCC 0x1B14, reset 'pipe') BEFORE the init table instead of after it; default 0 keeps the current order (CAF deasserts it after pcie_phy_init, pci-msm.c:3306-3314)");
+ 
++static int op2_phy_stage;	/* op2 0165: stop power_on after step N, 0 = run all */
++module_param_named(op2_phy_stage, op2_phy_stage, int, 0644);
++
+ static int msm8994_pcie_phy_power_on(struct phy *phy)
+ {
+ 	struct msm8994_pcie_phy *qphy = phy_get_drvdata(phy);
+@@ -166,6 +169,10 @@
+ 	u32 val;
+ 	int ret;
+ 
++	if (op2_phy_stage == 11) {
++		dev_info(qphy->dev, "op2dbg phy stop at stage 11\n");
++		return -EBUSY;
++	}
+ 	if (op2_pcie_pipe_rst_early && qphy->pipe_reset)
+ 		reset_control_deassert(qphy->pipe_reset);
+ 
+@@ -173,6 +180,10 @@
+ 		writel(msm8994_pcie_phy_tbl[i].val,
+ 		       qphy->base + msm8994_pcie_phy_tbl[i].reg);
+ 
++	if (op2_phy_stage == 12) {
++		dev_info(qphy->dev, "op2dbg phy stop at stage 12\n");
++		return -EBUSY;
++	}
+ 	/* op2 0137, param-gated by 273-01: CAF pcie_phy_init leaves the final
+ 	 * PWRDN=0x03 (pci-msm.c:973); the 0x01 re-write is a deviation. */
+ 	if (op2_pcie_pwrdn01) {
+@@ -195,12 +206,32 @@
+ 		if (ret)
+ 			return ret;
+ 	}
++	if (op2_phy_stage == 13) {
++		dev_info(qphy->dev, "op2dbg phy stop at stage 13\n");
++		return -EBUSY;
++	}
+ 	ret = clk_set_rate(qphy->pipe_clk, 125000000);
+ 	if (ret)
+ 		dev_warn(qphy->dev, "pipe clock rate: %d\n", ret);
++	if (op2_phy_stage == 14) {
++		dev_info(qphy->dev, "op2dbg phy stop at stage 14\n");
++		return -EBUSY;
++	}
+ 	ret = clk_prepare_enable(qphy->pipe_clk);
+ 	if (ret)
+ 		return ret;
++	if (op2_phy_stage == 15) {
++		dev_info(qphy->dev, "op2dbg phy stop at stage 15\n");
++		return -EBUSY;
++	}
++	if (op2_phy_stage >= 16 && op2_phy_stage <= 22) {
++		static const u16 rg[] = { 0x728, 0x14c, 0x160, 0x150, 0x608, 0x604, 0x014 };
++		u16 r = rg[op2_phy_stage - 16];
++
++		dev_info(qphy->dev, "op2dbg phy stage %d: reading %#x ...\n", op2_phy_stage, r);
++		dev_info(qphy->dev, "op2dbg phy stage %d: reg %#x = %#x\n", op2_phy_stage, r, readl(qphy->base + r));
++		return -EBUSY;
++	}
+ 
+ 	{
+ 		int i;

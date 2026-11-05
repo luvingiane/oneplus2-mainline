@@ -1,0 +1,197 @@
+--- a/drivers/input/misc/Kconfig
++++ b/drivers/input/misc/Kconfig
+@@ -1023,4 +1023,12 @@
+ 	  To compile this driver as a module, choose M here: the
+ 	  module will be called stpmic1_onkey.
+ 
++config INPUT_OP2_PMI8994_HAPTIC
++	tristate "OnePlus 2 PMI8994 ERM haptic (FF_RUMBLE)"
++	depends on INPUT && OF && REGMAP
++	select INPUT_FF_MEMLESS
++	help
++	  Drives the PMI8994 haptics block of the OnePlus 2 as a force-feedback
++	  rumble device.
++
+ endif
+--- a/drivers/input/misc/Makefile
++++ b/drivers/input/misc/Makefile
+@@ -97,3 +97,4 @@
+ obj-$(CONFIG_INPUT_XEN_KBDDEV_FRONTEND)	+= xen-kbdfront.o
+ obj-$(CONFIG_INPUT_YEALINK)		+= yealink.o
+ obj-$(CONFIG_INPUT_IDEAPAD_SLIDEBAR)	+= ideapad_slidebar.o
++obj-$(CONFIG_INPUT_OP2_PMI8994_HAPTIC)	+= op2-pmi8994-haptic.o
+--- /dev/null
++++ b/drivers/input/misc/op2-pmi8994-haptic.c
+@@ -0,0 +1,172 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * OnePlus 2: PMI8994 haptics block (stock "qcom,qpnp-haptic" @ 0xc000, ERM motor, direct play
++ * mode) as an input force-feedback (FF_RUMBLE) device. Register layout and the ERM/direct
++ * configuration follow the downstream qpnp-haptic.c (qpnp_hap_config, qpnp_hap_mod_enable,
++ * qpnp_hap_play); buffer/PWM/audio modes, brake patterns and the interrupts are not used.
++ */
++#include <linux/input.h>
++#include <linux/module.h>
++#include <linux/of.h>
++#include <linux/platform_device.h>
++#include <linux/regmap.h>
++#include <linux/workqueue.h>
++
++#define HAP_STATUS		0x0a
++#define HAP_EN_CTL		0x46
++#define HAP_EN_CTL2		0x48
++#define HAP_ACT_TYPE		0x4c
++#define HAP_WAV_SHAPE		0x4d
++#define HAP_PLAY_MODE		0x4e
++#define HAP_LRA_AUTO_RES	0x4f
++#define HAP_VMAX		0x51
++#define HAP_ILIM		0x52
++#define HAP_SC_DEB		0x53
++#define HAP_RATE_CFG1		0x54
++#define HAP_RATE_CFG2		0x55
++#define HAP_INT_PWM		0x56
++#define HAP_PWM_CAP		0x58
++#define HAP_PLAY		0x70
++
++#define HAP_EN			BIT(7)
++#define HAP_PLAY_EN		BIT(7)
++#define VMAX_MIN_MV		116
++#define VMAX_STEPS		31	/* 116 mV .. 3596 mV */
++
++struct op2_haptic {
++	struct regmap *map;
++	struct device *dev;
++	u32 base;
++	struct work_struct work;
++	u16 magnitude;		/* latest request, 0 = stop */
++	bool on;
++};
++
++static int hap_upd(struct op2_haptic *h, u32 reg, u32 mask, u32 val)
++{
++	return regmap_update_bits(h->map, h->base + reg, mask, val);
++}
++
++static int hap_config(struct op2_haptic *h, u32 vmax_mv, u32 ilim_ma, u32 rate_us)
++{
++	u32 rate = rate_us / 5;
++	int ret;
++
++	ret = hap_upd(h, HAP_ACT_TYPE, 0x01, 0x01);		/* ERM */
++	if (!ret)
++		ret = regmap_write(h->map, h->base + HAP_LRA_AUTO_RES, 0);
++	if (!ret)
++		ret = hap_upd(h, HAP_PLAY_MODE, 0x30, 0);	/* direct */
++	if (!ret)
++		ret = hap_upd(h, HAP_VMAX, 0x3e, (vmax_mv / VMAX_MIN_MV) << 1);
++	if (!ret)
++		ret = hap_upd(h, HAP_ILIM, 0x01, (ilim_ma / 400) >> 1);
++	if (!ret)
++		ret = hap_upd(h, HAP_SC_DEB, 0x07, 1);		/* 8 cycles */
++	if (!ret)
++		ret = hap_upd(h, HAP_INT_PWM, 0x03, 1);		/* 505 kHz */
++	if (!ret)
++		ret = hap_upd(h, HAP_PWM_CAP, 0x03, 1);
++	if (!ret)
++		ret = hap_upd(h, HAP_WAV_SHAPE, 0x01, 1);	/* square */
++	if (!ret)
++		ret = regmap_write(h->map, h->base + HAP_RATE_CFG1, rate & 0xff);
++	if (!ret)
++		ret = hap_upd(h, HAP_RATE_CFG2, 0x0f, (rate >> 8) & 0x0f);
++	return ret;
++}
++
++static void hap_work(struct work_struct *w)
++{
++	struct op2_haptic *h = container_of(w, struct op2_haptic, work);
++	u16 m = READ_ONCE(h->magnitude);
++
++	if (m) {
++		u32 steps = 1 + (u32)m * (VMAX_STEPS - 1) / 0xffff;
++
++		hap_upd(h, HAP_VMAX, 0x3e, steps << 1);
++		hap_upd(h, HAP_EN_CTL, HAP_EN, HAP_EN);
++		hap_upd(h, HAP_PLAY, HAP_PLAY_EN, HAP_PLAY_EN);
++		h->on = true;
++	} else if (h->on) {
++		hap_upd(h, HAP_PLAY, HAP_PLAY_EN, 0);
++		hap_upd(h, HAP_EN_CTL, HAP_EN, 0);
++		h->on = false;
++	}
++}
++
++static int hap_play(struct input_dev *dev, void *data, struct ff_effect *eff)
++{
++	struct op2_haptic *h = data;
++	u16 m = max(eff->u.rumble.strong_magnitude, eff->u.rumble.weak_magnitude);
++
++	WRITE_ONCE(h->magnitude, m);
++	schedule_work(&h->work);
++	return 0;
++}
++
++static int op2_haptic_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct input_dev *in;
++	struct op2_haptic *h;
++	u32 vmax = 3000, ilim = 800, rate = 5263;
++	int ret;
++
++	h = devm_kzalloc(dev, sizeof(*h), GFP_KERNEL);
++	if (!h)
++		return -ENOMEM;
++	h->dev = dev;
++	h->map = dev_get_regmap(dev->parent, NULL);
++	if (!h->map)
++		return -ENODEV;
++	ret = of_property_read_u32(dev->of_node, "reg", &h->base);
++	if (ret)
++		return ret;
++	of_property_read_u32(dev->of_node, "qcom,vmax-mv", &vmax);
++	of_property_read_u32(dev->of_node, "qcom,ilim-ma", &ilim);
++	of_property_read_u32(dev->of_node, "qcom,wave-play-rate-us", &rate);
++	INIT_WORK(&h->work, hap_work);
++
++	ret = hap_config(h, vmax, ilim, rate);
++	if (ret) {
++		dev_err(dev, "haptic config failed: %d\n", ret);
++		return ret;
++	}
++	in = devm_input_allocate_device(dev);
++	if (!in)
++		return -ENOMEM;
++	in->name = "op2-pmi8994-haptic";
++	input_set_drvdata(in, h);
++	input_set_capability(in, EV_FF, FF_RUMBLE);
++	ret = input_ff_create_memless(in, h, hap_play);
++	if (ret)
++		return ret;
++	ret = input_register_device(in);
++	if (ret)
++		return ret;
++	platform_set_drvdata(pdev, h);
++	dev_info(dev, "ERM haptic at %#x ready (vmax %u mV, ilim %u mA, rate %u us)\n", h->base, vmax, ilim, rate);
++	return 0;
++}
++
++static void op2_haptic_remove(struct platform_device *pdev)
++{
++	struct op2_haptic *h = platform_get_drvdata(pdev);
++
++	cancel_work_sync(&h->work);
++	h->magnitude = 0;
++	hap_work(&h->work);
++}
++
++static const struct of_device_id op2_haptic_of[] = { { .compatible = "oneplus,op2-pmi8994-haptic" }, { } };
++MODULE_DEVICE_TABLE(of, op2_haptic_of);
++
++static struct platform_driver op2_haptic_driver = {
++	.probe = op2_haptic_probe,
++	.remove = op2_haptic_remove,
++	.driver = { .name = "op2-pmi8994-haptic", .of_match_table = op2_haptic_of },
++};
++module_platform_driver(op2_haptic_driver);
++MODULE_DESCRIPTION("OnePlus 2 PMI8994 ERM haptic (FF_RUMBLE)");
++MODULE_LICENSE("GPL");

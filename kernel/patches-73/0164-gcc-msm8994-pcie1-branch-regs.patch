@@ -1,0 +1,33 @@
+From: Matt
+Subject: [PATCH] clk: qcom: gcc-msm8994: fix the PCIe1 mstr_axi and cfg_ahb branch registers
+
+pcie_1 mstr_axi was at 0x1b50 and cfg_ahb at 0x1b54 (the aux clock's register): CAF clock-gcc-8994.c:210-213
+has PCIE_1_MSTR_AXI_CBCR 0x1b4c and PCIE_1_CFG_AHB_CBCR 0x1b50 (pcie_0 is 0x1acc/0x1ad0, +0x80). With the
+wrong offsets gcc_pcie_1_cfg_ahb_clk stays 'stuck at off'.
+---
+--- a/drivers/clk/qcom/gcc-msm8994.c
++++ b/drivers/clk/qcom/gcc-msm8994.c
+@@ -1884,9 +1884,9 @@
+ };
+ 
+ static struct clk_branch gcc_pcie_1_cfg_ahb_clk = {
+-	.halt_reg = 0x1b54,
++	.halt_reg = 0x1b50,
+ 	.clkr = {
+-		.enable_reg = 0x1b54,
++		.enable_reg = 0x1b50,
+ 		.enable_mask = BIT(0),
+ 		.hw.init = &(struct clk_init_data){
+ 			.name = "gcc_pcie_1_cfg_ahb_clk",
+@@ -1896,9 +1896,9 @@
+ };
+ 
+ static struct clk_branch gcc_pcie_1_mstr_axi_clk = {
+-	.halt_reg = 0x1b50,
++	.halt_reg = 0x1b4c,
+ 	.clkr = {
+-		.enable_reg = 0x1b50,
++		.enable_reg = 0x1b4c,
+ 		.enable_mask = BIT(0),
+ 		.hw.init = &(struct clk_init_data){
+ 			.name = "gcc_pcie_1_mstr_axi_clk",

@@ -24,8 +24,10 @@ Latest milestone (2026-11-03): the hardware GPU renders the ztOS UI on mainline 
 | Touchscreen, keys, alert slider | works | slider = `gpio-keys` F13/F15 |
 | USB (device, NCM network + serial) | works when started from fastboot | after a normal boot the PC does not see the phone yet (see LOG.md) |
 | Battery | works | `kernel/patches/0013` |
-| Wi-Fi (QCA6174 on PCIe) | not yet | PCIe PHY: aux clock and PHY reset fixed (0028, 0020), PLL still does not lock |
-| Bluetooth | not yet | chip does not answer |
+| Wi-Fi (QCA6174 on PCIe) | works | the chip is on **PCIe1**, not PCIe0 (patches 0149-0158, 0162, 0164, 0165; DT `op2-wifi.dtsi` with `OP2_WIFI_PCIE1 OP2_WIFI_BOOT`); ath10k scans and associates, see [docs/MILESTONE-2026-11-05-wifi.md](docs/MILESTONE-2026-11-05-wifi.md). Firmware must be in the initramfs and `CONFIG_FW_LOADER_USER_HELPER` off. Starts rfkill-blocked |
+| Bluetooth | works | QCA6174 over UART (`op2-bt.dtsi`, patch 0161): needs the WL_EN GPIO high, the version read at 115200 baud and the QCA rampatch/nvm in the initramfs. The factory BD address is invalid: set one |
+| SoC temperature | works | 16 TSENS zones calibrated from the fuses (patch 0159, `op2-tsens.dtsi`); the A57 cluster resets near 118 C, `rootfs-overlay/usr/local/bin/op2-thermal.py` throttles the PLL post-dividers |
+| Vibration, hall sensor | present | PMI8994 haptic as an input FF_RUMBLE device (patch 0163); hall on GPIO 75 as `SW_MACHINE_COVER` (StyleSwap cover). Not checked by hand yet |
 | Audio | loudspeaker works | ADSP boots (`op2-adsp.dtsi`), q6 quaternary MI2S -> TFA9890 amplifier (`op2-audio.dtsi`, patch 0029); the WCD9330 codec (mics, earpiece, jack) has no mainline driver |
 | GPU (Adreno 430) | works on 7.3 and 6.12 | **7.3: hardware GL renders the whole ztMETRO UI from the eMMC, no hang, no failed submit** (patches `0130` + `0144`: a VM with a no-op MMU, IOVA == physical; cmdline `msm.identity_iova=1 msm.op2_gpu_phys=1 cma=768M`; Mesa freedreno FD430 with `FD_MESA_DEBUG=sysmem`, the OCMEM/GMEM path is still refused by TrustZone), see [docs/MILESTONE-2026-11-03.md](docs/MILESTONE-2026-11-03.md). 6.12: SMMU attached + physical addresses (`patches-612/0104`). GPU clock is fixed at 300 MHz |
 

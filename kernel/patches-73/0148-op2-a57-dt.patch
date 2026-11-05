@@ -1,0 +1,66 @@
+--- a/arch/arm64/boot/dts/qcom/msm8994.dtsi
++++ b/arch/arm64/boot/dts/qcom/msm8994.dtsi
+@@ -1119,3 +1119,5 @@
+ 	};
+ };
+ 
++
++#include "op2-a57.dtsi"
+--- /dev/null
++++ b/arch/arm64/boot/dts/qcom/op2-a57.dtsi
+@@ -0,0 +1,55 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * OnePlus 2 A57 cluster (cpu4-7) DT extras — task 267.
++ * Included at the end of msm8994.dtsi; everything is guarded by OP2_SMP_A57
++ * (a DTS_DEFINES of the OnePlus 2 builds only), so other msm8994 boards
++ * compile unchanged.
++ *
++ * Bring-up of cpu4-7 (ACC + cluster-1 L2 power-up) already lives in
++ * op2-smp.dtsi under OP2_SMP_A57: with DTS_DEFINES="... OP2_SMP OP2_SMP_A57 ..."
++ * and the cmdline arm64.late_cpu_conflicts=warn the 8 cores come up and stay
++ * on the reference clock (XO 19.2 MHz) as long as the clock driver leaves
++ * cluster 1 alone (clk_cpu_8994.a57stage=0, the default).
++ *
++ * OP2_CPUFREQ_A57 (needs OP2_CPUFREQ, which provides the clock_cpu node and
++ * cluster1_opp) wires cpu4-7 to the cluster-1 clock and OPP table for
++ * cpufreq-dt. Use it only together with clk_cpu_8994.a57clk=1, which makes
++ * the driver register a57_clk as clock index 1 (otherwise index 1 is
++ * -ENODEV and cpufreq-dt defers forever).
++ */
++#ifdef OP2_SMP_A57
++#if defined(OP2_CPUFREQ) && defined(OP2_CPUFREQ_A57)
++&{/cpus/cpu@100} {
++	clocks = <&clock_cpu 1>;
++	operating-points-v2 = <&cluster1_opp>;
++#ifdef OP2_CPUFREQ_VREG
++	cpu-supply = <&pm8994_s11>;
++#endif
++	clock-latency-ns = <100000>;
++};
++&{/cpus/cpu@101} {
++	clocks = <&clock_cpu 1>;
++	operating-points-v2 = <&cluster1_opp>;
++#ifdef OP2_CPUFREQ_VREG
++	cpu-supply = <&pm8994_s11>;
++#endif
++	clock-latency-ns = <100000>;
++};
++&{/cpus/cpu@102} {
++	clocks = <&clock_cpu 1>;
++	operating-points-v2 = <&cluster1_opp>;
++#ifdef OP2_CPUFREQ_VREG
++	cpu-supply = <&pm8994_s11>;
++#endif
++	clock-latency-ns = <100000>;
++};
++&{/cpus/cpu@103} {
++	clocks = <&clock_cpu 1>;
++	operating-points-v2 = <&cluster1_opp>;
++#ifdef OP2_CPUFREQ_VREG
++	cpu-supply = <&pm8994_s11>;
++#endif
++	clock-latency-ns = <100000>;
++};
++#endif /* OP2_CPUFREQ && OP2_CPUFREQ_A57 */
++#endif /* OP2_SMP_A57 */
