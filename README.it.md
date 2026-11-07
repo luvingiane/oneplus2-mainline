@@ -69,6 +69,14 @@ Ultima tappa (2026-11-03): la GPU hardware disegna l'interfaccia di ztOS su main
 Stato completo per componente: [STATUS.md](STATUS.md). Il lavoro giorno per giorno,
 con comandi, dump dei registri e risultati: [LOG.md](LOG.md) (in inglese).
 
+## Sul telefono
+
+ztMETRO su un OnePlus 2 con Linux mainline 7.3 (foto del telefono vero, 7 novembre 2026): la schermata Start, la pagina di sistema di ZrnDevTest (kernel, memoria, filesystem radice, riga di comando) e la schermata di blocco.
+
+| Start | Sistema | Blocco |
+|---|---|---|
+| <img src="docs/photos/start.jpg" width="260"> | <img src="docs/photos/system.jpg" width="260"> | <img src="docs/photos/lock.jpg" width="260"> |
+
 ## Struttura
 
 | Percorso | Cosa |

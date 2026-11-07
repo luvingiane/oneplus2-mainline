@@ -69,6 +69,14 @@ Latest milestone (2026-11-03): the hardware GPU renders the ztOS UI on mainline 
 Full per-component state: [STATUS.md](STATUS.md). Day-by-day work with commands,
 register dumps and results: [LOG.md](LOG.md).
 
+## On the phone
+
+ztMETRO on a OnePlus 2 running mainline Linux 7.3 (photos of the real phone, 7 November 2026): the Start screen, the system page of ZrnDevTest (kernel, memory, root filesystem, command line) and the lock screen.
+
+| Start | System | Lock screen |
+|---|---|---|
+| <img src="docs/photos/start.jpg" width="260"> | <img src="docs/photos/system.jpg" width="260"> | <img src="docs/photos/lock.jpg" width="260"> |
+
 ## Layout
 
 | Path | What |
