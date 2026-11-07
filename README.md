@@ -17,25 +17,50 @@ on-phone tools and the complete bring-up diary.
 Latest milestone (2026-11-03): the hardware GPU renders the ztOS UI on mainline 7.3, see
 [docs/MILESTONE-2026-11-03.md](docs/MILESTONE-2026-11-03.md).
 
-| Part | Linux 7.3 | Notes |
-|------|-----------|-------|
-| CPU, RAM, eMMC, PMICs, RPM | works | 4 cores with the CAF-style `qcom,8994-arm-cortex-acc` bring-up (patch 0010); no cpufreq yet (the 4 A53 cores run at a fixed clock of about 1.5 GHz) and the A57 cluster is not brought online |
-| Display (JDI JD35695, DSI command mode) | works | bootloader framebuffer + own panel driver (`kernel/panel/`) |
-| Touchscreen, keys, alert slider | works | slider = `gpio-keys` F13/F15 |
-| USB (device, NCM network + serial) | works when started from fastboot | after a normal boot the PC does not see the phone yet (see LOG.md) |
-| Battery | works | `kernel/patches/0013` |
-| Wi-Fi (QCA6174 on PCIe) | works | the chip is on **PCIe1**, not PCIe0 (patches 0149-0158, 0162, 0164, 0165; DT `op2-wifi.dtsi` with `OP2_WIFI_PCIE1 OP2_WIFI_BOOT`); ath10k scans and associates, see [docs/MILESTONE-2026-11-05-wifi.md](docs/MILESTONE-2026-11-05-wifi.md). Firmware must be in the initramfs and `CONFIG_FW_LOADER_USER_HELPER` off. Starts rfkill-blocked |
-| Bluetooth | works | QCA6174 over UART (`op2-bt.dtsi`, patch 0161): needs the WL_EN GPIO high, the version read at 115200 baud and the QCA rampatch/nvm in the initramfs. The factory BD address is invalid: set one |
-| SoC temperature | works | 16 TSENS zones calibrated from the fuses (patch 0159, `op2-tsens.dtsi`); the A57 cluster resets near 118 C, `rootfs-overlay/usr/local/bin/op2-thermal.py` throttles the PLL post-dividers |
-| Vibration, hall sensor | present | PMI8994 haptic as an input FF_RUMBLE device (patch 0163); hall on GPIO 75 as `SW_MACHINE_COVER` (StyleSwap cover). Not checked by hand yet |
-| Audio | loudspeaker works | ADSP boots (`op2-adsp.dtsi`), q6 quaternary MI2S -> TFA9890 amplifier (`op2-audio.dtsi`, patch 0029); the WCD9330 codec (mics, earpiece, jack) has no mainline driver |
-| GPU (Adreno 430) | works on 7.3 and 6.12 | **7.3: hardware GL renders the whole ztMETRO UI from the eMMC, no hang, no failed submit** (patches `0130` + `0144`: a VM with a no-op MMU, IOVA == physical; cmdline `msm.identity_iova=1 msm.op2_gpu_phys=1 cma=768M`; Mesa freedreno FD430 with `FD_MESA_DEBUG=sysmem`, the OCMEM/GMEM path is still refused by TrustZone), see [docs/MILESTONE-2026-11-03.md](docs/MILESTONE-2026-11-03.md). 6.12: SMMU attached + physical addresses (`patches-612/0104`). GPU clock is fixed at 300 MHz |
-| Modem, SIM, calls, SMS | works (call audio not yet) | MSS + ADSP remoteproc, `rmtfs` on the raw modem partitions, then a QMI DPM request opens `DATA5_CNTL` (`/dev/wwan0qmi0`, needs `CONFIG_WWAN` + `RPMSG_WWAN_CTRL`) and AT answers on `/dev/wwan0at0`. LTE registration, SMS (SIM storage), ringing and answering. A QMI VOICE client must be registered or the network is never alerted. `scripts/op2-modem-up.sh`, `op2-modem-watch.sh`, `tools/qmux`. The modem-to-codec voice path (SLIMbus) is missing |
-| Mobile data | not working | no packet path yet: the MSM8994 IPA v2 has no mainline driver (research in LOG.md) |
-| Airplane mode | works | `AT+CFUN=4` (and a deregistration) crash the modem firmware on this phone while it is registered, so `scripts/op2-airplane.sh` stops the modem remoteproc and starts it again in the order that avoids the "stalled initialization" loop |
-| Light and proximity sensors | partial | ADSP sensor manager through `tools/op2-sensord`; light works, proximity returns a constant value (not understood yet) |
-| Cameras | not working | front OV5648: CAMSS/CSID/ISPIF/VFE lined up with the vendor driver, still no MIPI packets (PHY status 0); rear OV13860: draft driver in `kernel/patches-73` (0189, 0190), untested |
-| Boot logo | works | Arch Linux logo in the `LOGO` partition (`tools/boot-logo/build_arch_logo.py`, flashed with `fastboot flash LOGO`, upper case) |
+**19 working · 3 partial · 9 broken · 7 untested**
+
+*Working* means 100% of the feature, tried on the phone; *Partial* says in the notes what is missing. Same wording as the ztOS device pages ([devices.ztos.online](https://devices.ztos.online)).
+
+| Category | Feature | Status | Notes |
+|---|---|---|---|
+| Boot | Mainline kernel boot (7.3), from RAM and from flash | Working | `fastboot boot` and the boot partition; cold start reaches the ztMETRO shell |
+| Boot | Boot logo | Working | Arch Linux logo in the `LOGO` partition (`tools/boot-logo`) |
+| Boot | CPU, 4 × A53 | Working | CAF-style ACC bring-up (patch 0010), fixed clock of about 1.5 GHz |
+| Boot | CPU, 4 × A57 | Broken | they come up with a real clock but the boot becomes intermittent (3 of 4 starts); left off |
+| Boot | CPU frequency scaling | Broken | no cpufreq: clock driver and OPP table are drafts, a 1 V / 1536 MHz try crashed the boot |
+| Display | Panel (JD35695, 1080p, DSI command mode) | Working | own panel driver (`kernel/panel`), MDP5 + DSI |
+| Display | GPU (Adreno 430) | Working | hardware OpenGL ES 3.0 (freedreno) draws the whole UI; needs patches 0130 + 0144 (identity IOVA, TZ refuses the SMMU) |
+| Input | Touchscreen (Synaptics S3320) | Working | multi-touch; GPIO 74 must stay on |
+| Input | Power and volume keys | Working | screenshot on power + volume up, volume with the screen off |
+| Input | Capacitive touch keys | Partial | events arrive and the left key acts as Home; the other key is not checked |
+| Input | Alert slider | Working | `gpio-keys` F13/F15 |
+| Audio | Loudspeaker | Working | ADSP + q6 quaternary MI2S → TFA9890 |
+| Audio | Earpiece, headphone jack, microphones | Broken | WCD9330 codec: the SLIMbus never enumerates (capability exchange times out), no mainline codec driver |
+| Audio | Audio of a phone call | Broken | needs the modem-to-codec path on SLIMbus |
+| Modem | Modem start and SIM | Working | MSS + ADSP remoteproc, `rmtfs`, QMI DPM opens `DATA5_CNTL`, USIM session (`scripts/op2-modem-up.sh`) |
+| Modem | Mobile network (LTE) and operator name | Working | registers on LTE; signal bars and operator in ztOS |
+| Modem | SMS | Working | read from the SIM storage |
+| Modem | Phone calls | Partial | ringing, answering and hanging up work (a QMI VOICE client is needed so the network alerts the phone); no voice audio yet |
+| Modem | Mobile data | Broken | no packet path: the MSM8994 IPA v2 has no mainline driver |
+| Modem | Airplane mode | Working | stops the modem (`AT+CFUN=4` crashes its firmware): `scripts/op2-airplane.sh` |
+| Modem | Second SIM | Untested |  |
+| Network | Wi-Fi (QCA6174 on PCIe1) | Working | ath10k scans and associates (patches 0149-0165) |
+| Network | Bluetooth | Partial | the controller works over UART; the factory BD address is invalid and must be set; audio over Bluetooth is not checked |
+| Network | USB networking (device mode) | Working | NCM + ssh; a watchdog can send the phone back to fastboot when no USB link comes up |
+| Network | USB host (OTG) | Untested |  |
+| Network | NFC | Untested |  |
+| Location | GPS | Broken | not started (lives in the modem: QMI LOC) |
+| Camera | Front camera (OV5648) | Broken | CSIPHY/CSID/ISPIF/VFE lined up with the vendor driver, the CSID test pattern passes, but no MIPI packets from the sensor (PHY status 0) |
+| Camera | Rear camera (OV13860) | Broken | draft driver in `kernel/patches-73` (0189, 0190), never run |
+| Sensors | Ambient light | Working | ADSP sensor manager through `tools/op2-sensord` |
+| Sensors | Proximity | Broken | returns a constant value even when covered (not understood yet) |
+| Sensors | Accelerometer, gyroscope, magnetometer | Untested | the ADSP streams them (`op2-sensord watch`), not checked; no auto-rotation |
+| Sensors | Hall sensor | Untested | `SW_MACHINE_COVER` on GPIO 75 |
+| Sensors | Fingerprint reader | Untested |  |
+| Power | Battery and charging | Working | `kernel/patches/0013` + APSD re-run |
+| Power | Temperature and thermal throttling | Working | 16 TSENS zones from the fuses; `op2-thermal.py` throttles the PLL post-dividers |
+| Power | Vibration | Untested | PMI8994 haptic as an `FF_RUMBLE` input device, not felt by hand yet |
+| Power | Notification LED | Working | PMI8994 LPG, red/green/blue |
 
 Full per-component state: [STATUS.md](STATUS.md). Day-by-day work with commands,
 register dumps and results: [LOG.md](LOG.md).
