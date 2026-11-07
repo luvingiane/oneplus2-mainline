@@ -19,7 +19,7 @@ Latest milestone (2026-11-03): the hardware GPU renders the ztOS UI on mainline 
 
 | Part | Linux 7.3 | Notes |
 |------|-----------|-------|
-| CPU, RAM, eMMC, PMICs, RPM | works | 4 cores with the CAF-style `qcom,8994-arm-cortex-acc` bring-up (patch 0010); no cpufreq yet (the cores stay at the bootloader clock, about 600 MHz) and the A57 cluster is not brought online |
+| CPU, RAM, eMMC, PMICs, RPM | works | 4 cores with the CAF-style `qcom,8994-arm-cortex-acc` bring-up (patch 0010); no cpufreq yet (the 4 A53 cores run at a fixed clock of about 1.5 GHz) and the A57 cluster is not brought online |
 | Display (JDI JD35695, DSI command mode) | works | bootloader framebuffer + own panel driver (`kernel/panel/`) |
 | Touchscreen, keys, alert slider | works | slider = `gpio-keys` F13/F15 |
 | USB (device, NCM network + serial) | works when started from fastboot | after a normal boot the PC does not see the phone yet (see LOG.md) |
@@ -30,6 +30,12 @@ Latest milestone (2026-11-03): the hardware GPU renders the ztOS UI on mainline 
 | Vibration, hall sensor | present | PMI8994 haptic as an input FF_RUMBLE device (patch 0163); hall on GPIO 75 as `SW_MACHINE_COVER` (StyleSwap cover). Not checked by hand yet |
 | Audio | loudspeaker works | ADSP boots (`op2-adsp.dtsi`), q6 quaternary MI2S -> TFA9890 amplifier (`op2-audio.dtsi`, patch 0029); the WCD9330 codec (mics, earpiece, jack) has no mainline driver |
 | GPU (Adreno 430) | works on 7.3 and 6.12 | **7.3: hardware GL renders the whole ztMETRO UI from the eMMC, no hang, no failed submit** (patches `0130` + `0144`: a VM with a no-op MMU, IOVA == physical; cmdline `msm.identity_iova=1 msm.op2_gpu_phys=1 cma=768M`; Mesa freedreno FD430 with `FD_MESA_DEBUG=sysmem`, the OCMEM/GMEM path is still refused by TrustZone), see [docs/MILESTONE-2026-11-03.md](docs/MILESTONE-2026-11-03.md). 6.12: SMMU attached + physical addresses (`patches-612/0104`). GPU clock is fixed at 300 MHz |
+| Modem, SIM, calls, SMS | works (call audio not yet) | MSS + ADSP remoteproc, `rmtfs` on the raw modem partitions, then a QMI DPM request opens `DATA5_CNTL` (`/dev/wwan0qmi0`, needs `CONFIG_WWAN` + `RPMSG_WWAN_CTRL`) and AT answers on `/dev/wwan0at0`. LTE registration, SMS (SIM storage), ringing and answering. A QMI VOICE client must be registered or the network is never alerted. `scripts/op2-modem-up.sh`, `op2-modem-watch.sh`, `tools/qmux`. The modem-to-codec voice path (SLIMbus) is missing |
+| Mobile data | not working | no packet path yet: the MSM8994 IPA v2 has no mainline driver (research in LOG.md) |
+| Airplane mode | works | `AT+CFUN=4` (and a deregistration) crash the modem firmware on this phone while it is registered, so `scripts/op2-airplane.sh` stops the modem remoteproc and starts it again in the order that avoids the "stalled initialization" loop |
+| Light and proximity sensors | partial | ADSP sensor manager through `tools/op2-sensord`; light works, proximity returns a constant value (not understood yet) |
+| Cameras | not working | front OV5648: CAMSS/CSID/ISPIF/VFE lined up with the vendor driver, still no MIPI packets (PHY status 0); rear OV13860: draft driver in `kernel/patches-73` (0189, 0190), untested |
+| Boot logo | works | Arch Linux logo in the `LOGO` partition (`tools/boot-logo/build_arch_logo.py`, flashed with `fastboot flash LOGO`, upper case) |
 
 Full per-component state: [STATUS.md](STATUS.md). Day-by-day work with commands,
 register dumps and results: [LOG.md](LOG.md).
@@ -76,6 +82,15 @@ are executable: otherwise `make` fails and the DTBs stay stale (`build-kernel.sh
 `OP2_SERIAL` must be set for the helper scripts that talk to a phone. A second
 phone on the same computer is booted with `op2.net=44` on its command line (`initramfs/init`) and
 recognised by its serial in `rootfs-overlay/usr/local/bin/op2-usb-watch` (`SECOND_PHONE_SERIAL`): put yours there.
+
+## Booting something other than ztOS
+
+The kernel, the device tree and the initramfs do not depend on ztOS: `scripts/build-boot.sh` makes a boot image whose
+initramfs mounts the root given in `op2.root=` (an ext4 partition of the phone's eMMC) and starts that system's init.
+Any aarch64 root filesystem with systemd and a recent userland should be a candidate; the phone-specific pieces
+(modem services, sensors, airplane helper, USB watch) are plain files under `rootfs-overlay/` and can be dropped or kept.
+Not tried with another system yet: this is the goal once the hardware list above is done. Always boot from RAM first
+(`fastboot boot`), flash only after it works.
 
 ## Upstream fixes found on the way
 

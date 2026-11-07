@@ -36,6 +36,10 @@ works; notes say what. **Blocked**: tried, stuck; notes say where.
 | – | Power | Battery, charging | **Works** | op2-battery (patch 0013) + APSD re-run (0x1341, op2-battery.dtsi): status=Charging con USB, 73% su B (s132) |
 | – | LED | Notification LED (PMI8994 LPG) | **Works** | red/green/blue, heartbeat trigger |
 
+## Update 2026-11-07
+
+On phone B (mainline 7.3), since the table above: modem, SIM, LTE registration, SMS, ringing and answering calls (no call audio yet), airplane mode, boot logo, 55 GB root filesystem. Open: mobile data (IPA), SLIMbus audio (earpiece, mics, jack), both cameras, proximity, cpufreq/A57. Per-component rows: see the README status table; day-by-day detail in [LOG.md](LOG.md).
+
 ## Software
 
 | Feature | Status | Notes |
