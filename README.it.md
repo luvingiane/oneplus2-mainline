@@ -21,46 +21,50 @@ Ultima tappa (2026-11-03): la GPU hardware disegna l'interfaccia di ztOS su main
 
 *Funziona* vuol dire il 100% della funzione, provata sul telefono; *Parziale* dice nelle note cosa manca. Stesse parole delle pagine dispositivo di ztOS ([devices.ztos.online](https://devices.ztos.online)).
 
+**20 funzionano · 2 parziali · 10 non funzionano · 6 non provati**
+
+*Funziona* vuol dire il 100% della funzione, provata sul telefono; *Parziale* dice nelle note cosa manca. Stesse parole delle pagine dispositivo di ztOS ([devices.ztos.online](https://devices.ztos.online)).
+
 | Categoria | Funzione | Stato | Note |
 |---|---|---|---|
-| Boot | Mainline kernel boot (7.3), from RAM and from flash | Funziona | `fastboot boot` e partizione boot; l'avvio a freddo arriva alla shell ztMETRO |
-| Boot | Boot logo | Funziona | logo Arch Linux nella partizione `LOGO` (`tools/boot-logo`) |
-| Boot | CPU, 4 × A53 | Funziona | avvio ACC stile CAF (patch 0010), clock fisso di circa 1,5 GHz |
-| Boot | CPU, 4 × A57 | Non funziona | si accendono con clock vero ma l'avvio diventa intermittente (3 su 4); lasciati spenti |
-| Boot | CPU frequency scaling | Non funziona | niente cpufreq: driver del clock e tabella OPP sono bozze, una prova a 1 V / 1536 MHz ha fatto crashare l'avvio |
-| Display | Panel (JD35695, 1080p, DSI command mode) | Funziona | driver del pannello (`kernel/panel`), MDP5 + DSI |
-| Display | GPU (Adreno 430) | Funziona | OpenGL ES 3.0 hardware (freedreno) disegna tutta l'interfaccia; servono le patch 0130 + 0144 (IOVA identità, il TZ rifiuta la SMMU) |
-| Input | Touchscreen (Synaptics S3320) | Funziona | multi-touch; il GPIO 74 deve restare acceso |
-| Input | Power and volume keys | Funziona | screenshot con accensione + volume su, volume a schermo spento |
-| Input | Capacitive touch keys | Parziale | gli eventi arrivano e il tasto di sinistra fa da Home; l'altro non è stato controllato |
-| Input | Alert slider | Funziona | `gpio-keys` F13/F15 |
-| Audio | Loudspeaker | Funziona | ADSP + MI2S quaternario q6 → TFA9890 |
-| Audio | Earpiece, headphone jack, microphones | Non funziona | codec WCD9330: lo SLIMbus non enumera mai (capability exchange scade), nessun driver mainline del codec |
-| Audio | Audio of a phone call | Non funziona | serve il percorso modem-codec su SLIMbus |
-| Modem | Modem start and SIM | Funziona | remoteproc MSS + ADSP, `rmtfs`, il DPM QMI apre `DATA5_CNTL`, sessione USIM (`scripts/op2-modem-up.sh`) |
-| Modem | Mobile network (LTE) and operator name | Funziona | si registra in LTE; tacche e operatore in ztOS |
-| Modem | SMS | Funziona | lette dalla memoria della SIM |
-| Modem | Phone calls | Parziale | squillo, risposta e chiusura funzionano (serve un client QMI VOICE perché la rete avvisi il telefono); ancora niente audio della voce |
-| Modem | Mobile data | Non funziona | manca il percorso dei pacchetti: l'IPA v2 dell'MSM8994 non ha un driver mainline |
-| Modem | Airplane mode | Funziona | ferma il modem (`AT+CFUN=4` ne fa crashare il firmware): `scripts/op2-airplane.sh` |
-| Modem | Second SIM | Non provato |  |
-| Network | Wi-Fi (QCA6174 on PCIe1) | Funziona | ath10k scansiona e si associa (patch 0149-0165) |
-| Network | Bluetooth | Parziale | il controller funziona via UART; l'indirizzo BD di fabbrica non è valido e va impostato; l'audio via Bluetooth non è controllato |
-| Network | USB networking (device mode) | Funziona | NCM + ssh; un watchdog può rimandare il telefono in fastboot se la USB non sale |
-| Network | USB host (OTG) | Non provato |  |
-| Network | NFC | Non provato |  |
-| Location | GPS | Non funziona | non iniziato (sta nel modem: QMI LOC) |
-| Camera | Front camera (OV5648) | Non funziona | CSIPHY/CSID/ISPIF/VFE allineati al driver originale, il test pattern del CSID passa, ma nessun pacchetto MIPI dal sensore (PHY status 0) |
-| Camera | Rear camera (OV13860) | Non funziona | bozza di driver in `kernel/patches-73` (0189, 0190), mai eseguita |
-| Sensors | Ambient light | Funziona | gestore sensori dell'ADSP con `tools/op2-sensord` |
-| Sensors | Proximity | Non funziona | dà un valore costante anche se coperto (non ancora capito) |
-| Sensors | Accelerometer, gyroscope, magnetometer | Non provato | l'ADSP li invia (`op2-sensord watch`), non controllati; niente rotazione automatica |
-| Sensors | Hall sensor | Non provato | `SW_MACHINE_COVER` sul GPIO 75 |
-| Sensors | Fingerprint reader | Non provato |  |
-| Power | Battery and charging | Funziona | `kernel/patches/0013` + riesecuzione APSD |
-| Power | Temperature and thermal throttling | Funziona | 16 zone TSENS dai fusibili; `op2-thermal.py` rallenta i post-divisori dei PLL |
-| Power | Vibration | Non provato | haptic PMI8994 come dispositivo `FF_RUMBLE`, non ancora sentito a mano |
-| Power | Notification LED | Funziona | PMI8994 LPG, rosso/verde/blu |
+| Boot | Mainline kernel boot (7.3), from RAM and from flash | 🟢 Funziona | `fastboot boot` e partizione boot; l'avvio a freddo arriva alla shell ztMETRO |
+| Boot | Boot logo | 🟢 Funziona | logo Arch Linux nella partizione `LOGO` (`tools/boot-logo`) |
+| Boot | CPU, 4 × A53 | 🟢 Funziona | avvio ACC stile CAF (patch 0010), clock fisso di circa 1,5 GHz |
+| Boot | CPU, 4 × A57 | 🔴 Non funziona | si accendono con clock vero ma l'avvio diventa intermittente (3 su 4); lasciati spenti |
+| Boot | CPU frequency scaling | 🔴 Non funziona | niente cpufreq: driver del clock e tabella OPP sono bozze, una prova a 1 V / 1536 MHz ha fatto crashare l'avvio |
+| Display | Panel (JD35695, 1080p, DSI command mode) | 🟢 Funziona | driver del pannello (`kernel/panel`), MDP5 + DSI |
+| Display | GPU (Adreno 430) | 🟢 Funziona | OpenGL ES 3.0 hardware (freedreno) disegna tutta l'interfaccia; servono le patch 0130 + 0144 (IOVA identità, il TZ rifiuta la SMMU) |
+| Input | Touchscreen (Synaptics S3320) | 🟢 Funziona | multi-touch; il GPIO 74 deve restare acceso |
+| Input | Power and volume keys | 🟢 Funziona | screenshot con accensione + volume su, volume a schermo spento |
+| Input | Capacitive touch keys | 🟡 Parziale | gli eventi arrivano e il tasto di sinistra fa da Home; l'altro non è stato controllato |
+| Input | Alert slider | 🟢 Funziona | `gpio-keys` F13/F15 |
+| Audio | Loudspeaker | 🟢 Funziona | ADSP + MI2S quaternario q6 → TFA9890 |
+| Audio | Earpiece, headphone jack, microphones | 🔴 Non funziona | codec WCD9330: lo SLIMbus non enumera mai (capability exchange scade), nessun driver mainline del codec |
+| Audio | Audio of a phone call | 🔴 Non funziona | serve il percorso modem-codec su SLIMbus |
+| Audio | Ringtone | 🔴 Non funziona | il telefono non suona alla chiamata in arrivo (chi chiama sente lo squillo); causa non ancora trovata |
+| Modem | Modem start and SIM | 🟢 Funziona | remoteproc MSS + ADSP, `rmtfs`, il DPM QMI apre `DATA5_CNTL`, sessione USIM (`scripts/op2-modem-up.sh`) |
+| Modem | Mobile network (LTE) and operator name | 🟢 Funziona | si registra in LTE; tacche e operatore in ztOS |
+| Modem | SMS | 🟢 Funziona | lette dalla memoria della SIM |
+| Modem | Phone calls | 🟡 Parziale | squillo, risposta e chiusura funzionano (serve un client QMI VOICE perché la rete avvisi il telefono); ancora niente audio della voce |
+| Modem | Mobile data | 🔴 Non funziona | manca il percorso dei pacchetti: l'IPA v2 dell'MSM8994 non ha un driver mainline |
+| Modem | Airplane mode | 🟢 Funziona | ferma il modem (`AT+CFUN=4` ne fa crashare il firmware): `scripts/op2-airplane.sh` |
+| Modem | Second SIM | ⚪ Non provato |  |
+| Network | Wi-Fi (QCA6174 on PCIe1) | 🟢 Funziona | ath10k scansiona e si associa (patch 0149-0165) |
+| Network | Bluetooth | 🟢 Funziona | controller via UART, audio via Bluetooth provato e funzionante; l'indirizzo BD di fabbrica non è valido e va impostato |
+| Network | USB networking (device mode) | 🟢 Funziona | NCM + ssh; un watchdog può rimandare il telefono in fastboot se la USB non sale |
+| Network | USB host (OTG) | ⚪ Non provato |  |
+| Location | GPS | 🔴 Non funziona | non iniziato (sta nel modem: QMI LOC) |
+| Camera | Front camera (OV5648) | 🔴 Non funziona | CSIPHY/CSID/ISPIF/VFE allineati al driver originale, il test pattern del CSID passa, ma nessun pacchetto MIPI dal sensore (PHY status 0) |
+| Camera | Rear camera (OV13860) | 🔴 Non funziona | bozza di driver in `kernel/patches-73` (0189, 0190), mai eseguita |
+| Sensors | Ambient light | 🟢 Funziona | gestore sensori dell'ADSP con `tools/op2-sensord` |
+| Sensors | Proximity | 🔴 Non funziona | dà un valore costante anche se coperto (non ancora capito) |
+| Sensors | Accelerometer, gyroscope, magnetometer | ⚪ Non provato | l'ADSP li invia (`op2-sensord watch`), non controllati; niente rotazione automatica |
+| Sensors | Hall sensor | ⚪ Non provato | `SW_MACHINE_COVER` sul GPIO 75 |
+| Sensors | Fingerprint reader | ⚪ Non provato |  |
+| Power | Battery and charging | 🟢 Funziona | `kernel/patches/0013` + riesecuzione APSD |
+| Power | Temperature and thermal throttling | 🟢 Funziona | 16 zone TSENS dai fusibili; `op2-thermal.py` rallenta i post-divisori dei PLL |
+| Power | Vibration | ⚪ Non provato | haptic PMI8994 come dispositivo `FF_RUMBLE`, non ancora sentito a mano |
+| Power | Notification LED | 🟢 Funziona | PMI8994 LPG, rosso/verde/blu |
 
 Stato completo per componente: [STATUS.md](STATUS.md). Il lavoro giorno per giorno,
 con comandi, dump dei registri e risultati: [LOG.md](LOG.md) (in inglese).

@@ -5,8 +5,9 @@ import json, re
 
 D = json.load(open("docs/features.json"))
 F = D["features"]
-ST = {"en": {"working": "Working", "partial": "Partial", "broken": "Broken", "untested": "Untested"},
-      "it": {"working": "Funziona", "partial": "Parziale", "broken": "Non funziona", "untested": "Non provato"}}
+# GitHub strips colours from tables, so the colour is a coloured circle in front of the word
+ST = {"en": {"working": "\U0001F7E2 Working", "partial": "\U0001F7E1 Partial", "broken": "\U0001F534 Broken", "untested": "\u26AA Untested"},
+      "it": {"working": "\U0001F7E2 Funziona", "partial": "\U0001F7E1 Parziale", "broken": "\U0001F534 Non funziona", "untested": "\u26AA Non provato"}}
 HEAD = {"en": ("Category", "Feature", "Status", "Notes"), "it": ("Categoria", "Funzione", "Stato", "Note")}
 CNT = {"en": "**{working} working · {partial} partial · {broken} broken · {untested} untested**",
        "it": "**{working} funzionano · {partial} parziali · {broken} non funzionano · {untested} non provati**"}
