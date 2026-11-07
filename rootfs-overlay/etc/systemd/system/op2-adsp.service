@@ -1,0 +1,13 @@
+[Unit]
+Description=Start the audio DSP (ADSP) once the root file system has its firmware
+ConditionPathExists=/sys/class/remoteproc/remoteproc0/state
+ConditionPathExists=/lib/firmware/qcom/msm8994/oneplus2/adsp.mbn
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/sh -c 'echo start > /sys/class/remoteproc/remoteproc0/state'
+ExecStop=/bin/sh -c 'echo stop > /sys/class/remoteproc/remoteproc0/state'
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,2925 @@
+--- a/drivers/soc/qcom/Kconfig
++++ b/drivers/soc/qcom/Kconfig
+@@ -152,6 +152,21 @@
+ 
+ 	  Say y here if you intend to debug or monitor platform sleep.
+ 
++config QCOM_SNS_REG
++	tristate "Qualcomm Sensors Registry service"
++	select QCOM_QMI_HELPERS
++	select AUXILIARY_BUS
++	depends on NET && QRTR && (ARCH_QCOM || COMPILE_TEST)
++	default QCOM_RPROC_COMMON
++	help
++	  Qualcomm Sensor Registry is a QMI service used by the Snapdragon
++	  Sensor Core (SSC) on Qualcomm SoCs to get platform specific sensor
++	  data. It is served by the application processor, and SSC requests
++	  data from it in the form of groups of keys. This server emulates the
++	  proprietary sensor daemon used in Android and provides SSC with the
++	  data it needs to function. It reads the sensor registry firmware file
++	  qcom/sensors/sns.reg (on Android devices /persist/sensors/sns.reg).
++
+ config QCOM_RPMH
+ 	tristate "Qualcomm RPM-Hardened (RPMH) Communication"
+ 	depends on (QCOM_COMMAND_DB || !QCOM_COMMAND_DB)
+--- a/drivers/soc/qcom/Makefile
++++ b/drivers/soc/qcom/Makefile
+@@ -41,3 +41,4 @@
+ obj-$(CONFIG_QCOM_INLINE_CRYPTO_ENGINE)	+= qcom_ice.o
+ obj-$(CONFIG_QCOM_PBS) +=	qcom-pbs.o
+ obj-$(CONFIG_QCOM_UBWC_CONFIG) += ubwc_config.o
++obj-$(CONFIG_QCOM_SNS_REG)	+= qcom_sns_reg.o
+--- a/drivers/iio/common/Kconfig
++++ b/drivers/iio/common/Kconfig
+@@ -7,6 +7,7 @@
+ source "drivers/iio/common/hid-sensors/Kconfig"
+ source "drivers/iio/common/inv_sensors/Kconfig"
+ source "drivers/iio/common/ms_sensors/Kconfig"
++source "drivers/iio/common/qcom_smgr/Kconfig"
+ source "drivers/iio/common/scmi_sensors/Kconfig"
+ source "drivers/iio/common/ssp_sensors/Kconfig"
+ source "drivers/iio/common/st_sensors/Kconfig"
+--- a/drivers/iio/common/Makefile
++++ b/drivers/iio/common/Makefile
+@@ -12,6 +12,7 @@
+ obj-y += hid-sensors/
+ obj-y += inv_sensors/
+ obj-y += ms_sensors/
++obj-y += qcom_smgr/
+ obj-y += scmi_sensors/
+ obj-y += ssp_sensors/
+ obj-y += st_sensors/
+--- a/drivers/iio/accel/Kconfig
++++ b/drivers/iio/accel/Kconfig
+@@ -705,4 +705,14 @@
+ 	  Choosing M will build the driver as a module. If so, the module
+ 	  will be called stk8ba50.
+ 
++config IIO_QCOM_SMGR_ACCEL
++	tristate "Qualcomm SSC Sensor Manager Accelerometer"
++	depends on IIO_QCOM_SMGR
++	select IIO_BUFFER
++	select IIO_KFIFO_BUF
++	help
++	  Say yes here to get support for accelerometers connected to
++	  a Qualcomm Snapdragon Sensor Core and accessed through its
++	  Sensor Manager service.
++
+ endmenu
+--- a/drivers/iio/accel/Makefile
++++ b/drivers/iio/accel/Makefile
+@@ -88,3 +88,4 @@
+ 
+ obj-$(CONFIG_IIO_ST_ACCEL_I2C_3AXIS) += st_accel_i2c.o
+ obj-$(CONFIG_IIO_ST_ACCEL_SPI_3AXIS) += st_accel_spi.o
++obj-$(CONFIG_IIO_QCOM_SMGR_ACCEL) += qcom_smgr_accel.o
+--- a/drivers/iio/gyro/Kconfig
++++ b/drivers/iio/gyro/Kconfig
+@@ -179,4 +179,14 @@
+ 	  Say yes here to add support for the InvenSense ITG3200 digital
+ 	  3-axis gyroscope sensor.
+ 
++config IIO_QCOM_SMGR_GYRO
++	tristate "Qualcomm SSC Sensor Manager Gyroscope"
++	depends on IIO_QCOM_SMGR
++	select IIO_BUFFER
++	select IIO_KFIFO_BUF
++	help
++	  Say yes here to get support for gyroscopes connected to
++	  a Qualcomm Snapdragon Sensor Core and accessed through its
++	  Sensor Manager service.
++
+ endmenu
+--- a/drivers/iio/gyro/Makefile
++++ b/drivers/iio/gyro/Makefile
+@@ -36,3 +36,4 @@
+ 
+ obj-$(CONFIG_IIO_ST_GYRO_I2C_3AXIS) += st_gyro_i2c.o
+ obj-$(CONFIG_IIO_ST_GYRO_SPI_3AXIS) += st_gyro_spi.o
++obj-$(CONFIG_IIO_QCOM_SMGR_GYRO) += qcom_smgr_gyro.o
+--- a/drivers/iio/magnetometer/Kconfig
++++ b/drivers/iio/magnetometer/Kconfig
+@@ -331,4 +331,14 @@
+ 	  To compile this driver as a module, choose M here: the module
+ 	  will be called yamaha-yas.
+ 
++config IIO_QCOM_SMGR_MAG
++	tristate "Qualcomm SSC Sensor Manager Magnetometer"
++	depends on IIO_QCOM_SMGR
++	select IIO_BUFFER
++	select IIO_KFIFO_BUF
++	help
++	  Say yes here to get support for magnetometers connected to
++	  a Qualcomm Snapdragon Sensor Core and accessed through its
++	  Sensor Manager service.
++
+ endmenu
+--- a/drivers/iio/magnetometer/Makefile
++++ b/drivers/iio/magnetometer/Makefile
+@@ -43,3 +43,4 @@
+ obj-$(CONFIG_TI_TMAG5273)		+= tmag5273.o
+ 
+ obj-$(CONFIG_YAMAHA_YAS530)		+= yamaha-yas530.o
++obj-$(CONFIG_IIO_QCOM_SMGR_MAG) += qcom_smgr_mag.o
+--- a/drivers/iio/proximity/Kconfig
++++ b/drivers/iio/proximity/Kconfig
+@@ -270,4 +270,14 @@
+ 	  To compile this driver as a module, choose M here: the
+ 	  module will be called aw96103.
+ 
++config IIO_QCOM_SMGR_PROX
++	tristate "Qualcomm SSC Sensor Manager Proximity Sensor"
++	depends on IIO_QCOM_SMGR
++	select IIO_BUFFER
++	select IIO_KFIFO_BUF
++	help
++	  Say yes here to get support for proximity sensors connected to
++	  a Qualcomm Snapdragon Sensor Core and accessed through its
++	  Sensor Manager service.
++
+ endmenu
+--- a/drivers/iio/proximity/Makefile
++++ b/drivers/iio/proximity/Makefile
+@@ -26,3 +26,4 @@
+ obj-$(CONFIG_VL53L1X_I2C)	+= vl53l1x-i2c.o
+ obj-$(CONFIG_AW96103)		+= aw96103.o
+ 
++obj-$(CONFIG_IIO_QCOM_SMGR_PROX) += qcom_smgr_prox.o
+--- a/drivers/soc/qcom/qcom_sns_reg.c
++++ b/drivers/soc/qcom/qcom_sns_reg.c
+@@ -0,0 +1,655 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Qualcomm Sensor Registry service
++ *
++ * Based on sns-reg userspace daemon code by Yassine Oudjana, 2023
++ * Copyright (c) 2025 Alexey Minnekhanov
++ */
++
++#include <linux/auxiliary_bus.h>
++#include <linux/delay.h>
++#include <linux/firmware.h>
++#include <linux/kernel.h>
++#include <linux/mod_devicetable.h>
++#include <linux/module.h>
++#include <linux/notifier.h>
++#include <linux/of.h>
++#include <linux/refcount.h>
++#include <linux/remoteproc/qcom_rproc.h>
++#include <linux/slab.h>
++#include <linux/soc/qcom/qmi.h>
++#include <linux/workqueue.h>
++
++#define SNS_REG_QMI_SVC_ID		0x010f /* 271 */
++#define SNS_REG_QMI_SVC_V1		2
++#define SNS_REG_QMI_INS_ID		0
++
++#define SNS_REG_GROUP_MSG_ID		0x4
++#define SNS_REG_GROUP_DATA_MAX_LEN	0x100
++
++/* Maximum size of group response packet = size of all TLVs + size of data */
++#define SNS_REG_GROUP_RESP_MAX_LEN	5 + 5 + 5 + SNS_REG_GROUP_DATA_MAX_LEN /* 271 */
++
++struct sns_reg_group_req {
++	unsigned short id;
++};
++
++struct sns_reg_group_resp {
++	unsigned short result;
++	unsigned short id;
++	unsigned short data_len;
++	unsigned char data[SNS_REG_GROUP_DATA_MAX_LEN];
++};
++
++struct qmi_elem_info sns_reg_group_req_ei[] = {
++	{
++		.data_type  = QMI_UNSIGNED_2_BYTE,
++		.elem_len   = 1,
++		.elem_size  = sizeof(unsigned short),
++		.array_type = NO_ARRAY,
++		.tlv_type   = 0x01,
++		.offset     = offsetof(struct sns_reg_group_req, id),
++	},
++	{
++		.data_type = QMI_EOTI,
++	},
++};
++
++struct qmi_elem_info sns_reg_group_resp_ei[] = {
++	{
++		.data_type  = QMI_UNSIGNED_2_BYTE,
++		.elem_len   = 1,
++		.elem_size  = sizeof(unsigned short),
++		.array_type = NO_ARRAY,
++		.tlv_type   = 0x02,
++		.offset     = offsetof(struct sns_reg_group_resp, result),
++	},
++	{
++		.data_type  = QMI_UNSIGNED_2_BYTE,
++		.elem_len   = 1,
++		.elem_size  = sizeof(unsigned short),
++		.array_type = NO_ARRAY,
++		.tlv_type   = 0x03,
++		.offset     = offsetof(struct sns_reg_group_resp, id),
++	},
++	{
++		.data_type  = QMI_DATA_LEN,
++		.elem_len   = 1,
++		.elem_size  = sizeof(unsigned short),
++		.array_type = NO_ARRAY,
++		.tlv_type   = 0x04,
++		.offset     = offsetof(struct sns_reg_group_resp, data_len),
++	},
++	{
++		.data_type  = QMI_UNSIGNED_1_BYTE,
++		.elem_len   = SNS_REG_GROUP_DATA_MAX_LEN,
++		.elem_size  = sizeof(unsigned char),
++		.array_type = VAR_LEN_ARRAY,
++		.tlv_type   = 0x04,
++		.offset     = offsetof(struct sns_reg_group_resp, data),
++	},
++	{
++		.data_type = QMI_EOTI,
++	},
++};
++
++/*
++ * Mapping of groups to binary registry (sns.reg).
++ * This data appears to be static.
++ *
++ * @group_id - group id
++ * @offset - offset to group's first key in sns.reg file
++ * @size - size of group keys combined, in bytes
++ */
++ struct group_map_entry {
++	unsigned short group_id;
++	unsigned short offset;
++	size_t size;
++};
++
++ static const struct group_map_entry group_map[] = {
++	{ 0, 0x0000, 0x018 },
++	{ 10, 0x0800, 0x018 },
++	{ 20, 0x3000, 0x3a }, // FIXME or size=0x7e for some?
++	{ 50, 0x0900, 0x005 },
++	{ 1000, 0x0a00, 0x003 },
++	{ 1001, 0x0b00, 0x003 },
++	{ 1010, 0x0c00, 0x003 },
++	{ 1020, 0x0d00, 0x003 },
++	{ 1030, 0x4100, 0x018 },
++	{ 1040, 0x0100, 0x080 },
++	{ 1050, 0x3200, 0x100 },
++	{ 1080, 0x3600, 0x080 },
++	{ 1081, 0x3700, 0x080 },
++	{ 1090, 0x3300, 0x100 },
++	{ 1091, 0x3400, 0x100 },
++	{ 1110, 0x3800, 0x003 },
++	{ 1120, 0x3d00, 0x018 },
++	{ 1130, 0x3e00, 0x018 },
++	{ 1140, 0x4000, 0x018 },
++	{ 2000, 0x0200, 0x010 },
++	{ 2001, 0x0300, 0x00c },
++	{ 2002, 0x0400, 0x018 },
++	{ 2050, 0x1100, 0x00c },
++	{ 2500, 0x0500, 0x015 },
++	{ 2600, 0x0600, 0x0ea },
++	{ 2610, 0x0700, 0x018 },
++	{ 2620, 0x0e00, 0x024 },
++	{ 2630, 0x0f00, 0x018 },
++	{ 2640, 0x1000, 0x00a },
++	{ 2650, 0x1200, 0x0ac },
++	{ 2660, 0x1400, 0x005 },
++	{ 2670, 0x1500, 0x010 },
++	{ 2680, 0x1600, 0x00d },
++	{ 2690, 0x1700, 0x100 },
++	{ 2691, 0x2600, 0x100 },
++	{ 2692, 0x1800, 0x100 },
++	{ 2693, 0x1900, 0x100 },
++	{ 2694, 0x1a00, 0x100 },
++	{ 2695, 0x1b00, 0x100 },
++	{ 2696, 0x1c00, 0x100 },
++	{ 2697, 0x2f00, 0x100 },
++	{ 2698, 0x2700, 0x100 },
++	{ 2699, 0x2d00, 0x100 },
++	{ 2700, 0x1d00, 0x0e0 },
++	{ 2701, 0x1e00, 0x0e0 },
++	{ 2800, 0x1f00, 0x022 },
++	{ 2900, 0x2000, 0x004 },
++	{ 2910, 0x2100, 0x004 },
++	{ 2920, 0x2200, 0x004 },
++	{ 2930, 0x2300, 0x004 },
++	{ 2940, 0x2400, 0x024 },
++	{ 2950, 0x2500, 0x008 },
++	{ 2960, 0x2800, 0x004 },
++	{ 2970, 0x2900, 0x08f },
++	{ 2971, 0x2b00, 0x016 },
++	{ 2980, 0x2a00, 0x3a },  // FIXME or size=0x7e for some?
++	{ 2990, 0x2c00, 0x020 },
++	{ 3000, 0x2e00, 0x100 },
++	{ 3010, 0x3100, 0x100 },
++	{ 3020, 0x3500, 0x100 },
++	{ 3040, 0x3a00, 0x014 },
++	{ 3050, 0x3900, 0x100 },
++	{ 3060, 0x3b00, 0x100 },
++	{ 3070, 0x3c00, 0x00c },
++	{ 3080, 0x3f00, 0x05a },
++	{ 3090, 0x6000, 0x014 },
++	{ 3300, 0x4200, 0x00e },
++	{ 3301, 0x4300, 0x00e },
++	{ 3302, 0x4400, 0x00e },
++	{ 3303, 0x4500, 0x00e },
++	{ 3304, 0x4600, 0x00e },
++	{ 3305, 0x4700, 0x00e },
++	{ 3306, 0x4800, 0x00e },
++	{ 3307, 0x4900, 0x00e },
++	{ 3308, 0x4a00, 0x00e },
++	{ 3309, 0x4b00, 0x00e },
++	{ 3310, 0x4c00, 0x00e },
++	{ 3311, 0x4d00, 0x00e },
++	{ 3312, 0x4e00, 0x00e },
++	{ 3313, 0x4f00, 0x00e },
++	{ 3314, 0x5000, 0x00e },
++	{ 3315, 0x5100, 0x00e },
++	{ 3316, 0x5200, 0x00e },
++	{ 3317, 0x5300, 0x00e },
++	{ 3318, 0x5400, 0x00e },
++	{ 3319, 0x5500, 0x00e },
++	{ 3320, 0x5600, 0x00e },
++	{ 3321, 0x5700, 0x00e },
++	{ 3322, 0x5800, 0x00e },
++	{ 3323, 0x5900, 0x00e },
++	{ 3324, 0x5a00, 0x00e },
++	{ 3325, 0x5b00, 0x00e },
++	{ 3326, 0x5c00, 0x00e },
++	{ 3327, 0x5d00, 0x00e },
++	{ 3328, 0x5e00, 0x00e },
++	{ 3329, 0x5f00, 0x00e },
++	{ 3400, 0x6100, 0x01c },
++	{ /* sentinel */}
++};
++
++static const struct group_map_entry *group_map_entry_by_id(short gid)
++{
++	const struct group_map_entry *entry;
++	int index = 0;
++
++	while ((entry = &group_map[index++])->size)
++		if (entry->group_id == gid)
++			return entry;
++	return NULL;
++}
++
++enum sns_reg_target_rproc {
++	NOT_SUPPORTED,
++	RPROC_ADSP,
++	RPROC_SLPI
++};
++
++struct sns_reg_of_match_data {
++	enum sns_reg_target_rproc target_rproc;
++};
++
++static const struct sns_reg_of_match_data sns_reg_target_adsp = { .target_rproc = RPROC_ADSP };
++static const struct sns_reg_of_match_data sns_reg_target_slpi = { .target_rproc = RPROC_SLPI };
++
++static const struct of_device_id sns_reg_supported_socs[] __maybe_unused = {
++	{ .compatible = "qcom,apq8096", .data = &sns_reg_target_slpi, },
++	{ .compatible = "qcom,msm8226", .data = &sns_reg_target_adsp, }, /* untested */
++	{ .compatible = "qcom,msm8917", .data = &sns_reg_target_adsp, },
++	{ .compatible = "qcom,msm8994", .data = &sns_reg_target_adsp, },
++	{ .compatible = "qcom,msm8920", .data = &sns_reg_target_adsp, },
++	{ .compatible = "qcom,msm8937", .data = &sns_reg_target_adsp, },
++	{ .compatible = "qcom,msm8940", .data = &sns_reg_target_adsp, },
++	{ .compatible = "qcom,msm8953", .data = &sns_reg_target_adsp, },
++	{ .compatible = "qcom,msm8974", .data = &sns_reg_target_adsp, }, /* untested */
++	{ .compatible = "qcom,msm8996", .data = &sns_reg_target_slpi, },
++	{ .compatible = "qcom,msm8998", .data = &sns_reg_target_slpi, }, /* untested */
++	{ .compatible = "qcom,sda660", .data = &sns_reg_target_adsp, },
++	{ .compatible = "qcom,sdm429", .data = &sns_reg_target_adsp, },
++	{ .compatible = "qcom,sdm439", .data = &sns_reg_target_adsp, },
++	{ .compatible = "qcom,sdm450", .data = &sns_reg_target_adsp, },
++	{ .compatible = "qcom,sdm630", .data = &sns_reg_target_adsp, },
++	{ .compatible = "qcom,sdm632", .data = &sns_reg_target_adsp, },
++	{ .compatible = "qcom,sdm636", .data = &sns_reg_target_adsp, },
++	{ .compatible = "qcom,sdm660", .data = &sns_reg_target_adsp, },
++	{}
++};
++
++static enum sns_reg_target_rproc get_target_rproc(void)
++{
++	const struct of_device_id *match;
++	const struct sns_reg_of_match_data *mdata;
++
++	match = of_match_node(sns_reg_supported_socs, of_root);
++	if (!match)
++		return NOT_SUPPORTED;
++
++	mdata = match->data;
++	return mdata->target_rproc;
++}
++
++struct qcom_sns_reg_data {
++	refcount_t refcnt;
++
++	/*
++	 * This driver is not bound to specific device; however for logging
++	 * purposes we can use the first one that triggered our probe.
++	 */
++	struct auxiliary_device *first_auxdev;
++
++	struct qmi_handle svc_handle;
++	bool qmi_svc_started;
++
++	const struct firmware *fw;
++
++	enum sns_reg_target_rproc target_rproc;
++	struct notifier_block ssr_nb;
++	void *ssr_cookie;
++
++	struct work_struct work;
++};
++
++static DEFINE_MUTEX(qcom_sns_reg_mutex); /* protects __qcom_sns_reg_data */
++static struct qcom_sns_reg_data *__qcom_sns_reg_data;
++
++/* little helpers to save from typing too long lines */
++#define sns_reg_info(fmt, ...) \
++	dev_info(&__qcom_sns_reg_data->first_auxdev->dev, fmt, ##__VA_ARGS__)
++#define sns_reg_err(fmt, ...) \
++	dev_err(&__qcom_sns_reg_data->first_auxdev->dev, fmt, ##__VA_ARGS__)
++#define sns_reg_warn(fmt, ...) \
++	dev_warn(&__qcom_sns_reg_data->first_auxdev->dev, fmt, ##__VA_ARGS__)
++#define sns_reg_dbg(fmt, ...) \
++	dev_dbg(&__qcom_sns_reg_data->first_auxdev->dev, fmt, ##__VA_ARGS__)
++
++/*
++ * SSC firmware will ask us for a group of configs keys stored
++ * in sns.reg file in binary form. Each group consists of several
++ * keys of various length, but they're stored sequentially and
++ * we know starting offset and size of the group block from the
++ * group_map struct data. This byte blob is what's being sent in
++ * response in "data" field.
++ * We're basically serving the partial contents of sns.reg file
++ * in each request->response interaction.
++ */
++static void qcom_sns_reg_get_group_req_handler(
++	struct qmi_handle *qmi,
++	struct sockaddr_qrtr *sq,
++	struct qmi_txn *txn,
++	const void *decoded)
++{
++	struct sns_reg_group_resp *rsp;
++	const struct sns_reg_group_req *req = decoded;
++	const struct group_map_entry *group;
++	int ret;
++
++	group = group_map_entry_by_id(req->id);
++
++	rsp = kzalloc(sizeof(*rsp), GFP_KERNEL);
++	if (!rsp)
++		return;
++
++	mutex_lock(&qcom_sns_reg_mutex);
++
++	/* assume by default everything goes wrong */
++	rsp->result = QMI_RESULT_FAILURE_V01;
++	rsp->data_len = 0;
++	rsp->id = req->id; /* fill in group ID for both error and OK cases */
++
++	if (!group) {
++		/*
++		 * This might be totally normal, depending on SoC.
++		 * Not all SoCs have all the groups.
++		 */
++		sns_reg_warn("got request for unmapped group id=%u", req->id);
++	} else {
++		/* bounds check */
++		if (!__qcom_sns_reg_data->fw
++			|| group->offset >= __qcom_sns_reg_data->fw->size
++			|| (group->offset + group->size) >= __qcom_sns_reg_data->fw->size)
++		{
++			sns_reg_err("no firmware or it is buggy!\n");
++		} else {
++			/* Success, fill in the response struct fields */
++			rsp->result = QMI_RESULT_SUCCESS_V01;
++			rsp->data_len = group->size;
++			memcpy(&rsp->data, __qcom_sns_reg_data->fw->data + group->offset, group->size);
++		}
++	}
++
++	ret = qmi_send_response(qmi, sq, txn, SNS_REG_GROUP_MSG_ID,
++		SNS_REG_GROUP_RESP_MAX_LEN, sns_reg_group_resp_ei, rsp);
++	if (ret)
++		sns_reg_err("failed to send group response: %d\n", ret);
++
++	mutex_unlock(&qcom_sns_reg_mutex);
++
++	kfree(rsp);
++}
++
++static const struct qmi_msg_handler qcom_sns_reg_msg_handlers[] = {
++	{
++		.type = QMI_REQUEST,
++		.msg_id = SNS_REG_GROUP_MSG_ID,
++		.ei = sns_reg_group_req_ei,
++		.decoded_size = sizeof(struct sns_reg_group_req),
++		.fn = qcom_sns_reg_get_group_req_handler,
++	},
++	{ },
++};
++
++static int qcom_sns_reg_qmi_service_start(void)
++{
++	int ret = 0;
++
++	if (__qcom_sns_reg_data->qmi_svc_started)
++		return 0;
++
++	ret = qmi_add_server(&__qcom_sns_reg_data->svc_handle,
++		SNS_REG_QMI_SVC_ID, SNS_REG_QMI_SVC_V1, SNS_REG_QMI_INS_ID);
++	if (ret) {
++		sns_reg_err("error adding QMI server %d\n", ret);
++	} else {
++		__qcom_sns_reg_data->qmi_svc_started = true;
++	}
++
++	return ret;
++}
++
++static int qcom_sns_reg_load_firmware(struct auxiliary_device *auxdev)
++{
++	int ret;
++	char *fwname[2];
++	const char *top_compatible;
++	int i;
++
++	ret = of_property_read_string(of_root, "compatible", &top_compatible);
++	if (ret == 0) {
++		/* First try to load specific fw, then fallback one */
++		fwname[0] = kasprintf(GFP_KERNEL, "qcom/sensors/sns.reg-%s", top_compatible);
++		fwname[1] = kasprintf(GFP_KERNEL, "qcom/sensors/sns.reg");
++	} else {
++		fwname[0] = kasprintf(GFP_KERNEL, "qcom/sensors/sns.reg");
++		fwname[1] = NULL;
++	}
++
++	if (!fwname[0] || !fwname[1])
++		return -ENOMEM;
++
++	for (i = 0; i < ARRAY_SIZE(fwname); i++) {
++		if (!fwname[i])
++			continue;
++
++		ret = request_firmware(&__qcom_sns_reg_data->fw, fwname[i], &auxdev->dev);
++		if (ret == 0) {
++			if (i > 0)
++				dev_info(&auxdev->dev, "firmware loaded, error above can be ignored.\n");
++			goto fw_free_ret;
++		}
++	}
++
++	dev_err(&auxdev->dev, "Failed to load fw from: qcom/sensors/sns.reg*\n");
++
++fw_free_ret:
++	kfree(fwname[1]);
++	kfree(fwname[0]);
++	return ret;
++}
++
++static void qcom_sns_reg_maybe_start(void)
++{
++	bool do_start = false;
++	const bool adsp_started = qcom_ssr_last_status("lpass") == QCOM_SSR_AFTER_POWERUP;
++	const bool slpi_started = qcom_ssr_last_status("dsps") == QCOM_SSR_AFTER_POWERUP;
++
++	/* Start our service only if target rproc is up */
++	switch(__qcom_sns_reg_data->target_rproc)
++	{
++	case RPROC_ADSP:
++		sns_reg_dbg("maybe_start: waiting for: ADSP\n");
++		if (adsp_started)
++			do_start = true;
++		break;
++	case RPROC_SLPI:
++		sns_reg_dbg("maybe_start: waiting for: SLPI\n");
++		if (slpi_started)
++			do_start = true;
++		break;
++	default:
++		break;
++	}
++
++	if (do_start) {
++		sns_reg_dbg("   ... and the wait is over\n");
++		qcom_sns_reg_qmi_service_start();
++	} else
++		sns_reg_dbg("   ... not time to start yet\n");
++}
++
++static void qcom_sns_reg_ssr_notifier_work(struct work_struct *work)
++{
++	/*
++	 * The DSP reports AFTER_POWERUP before its QRTR endpoint can take our
++	 * NEW_SERVER announcement (-ENOENT, "failed to announce new service"):
++	 * the SSC then never learns about the registry. Give it a moment.
++	 */
++	msleep(3000);
++
++	mutex_lock(&qcom_sns_reg_mutex);
++
++	qcom_sns_reg_maybe_start();
++
++	mutex_unlock(&qcom_sns_reg_mutex);
++}
++
++static int qcom_sns_reg_ssr_notify_handler(struct notifier_block *nb, unsigned long action, void *data)
++{
++	switch (action) {
++	case QCOM_SSR_AFTER_POWERUP:
++		schedule_work(&__qcom_sns_reg_data->work);
++		break;
++	default:
++		break;
++	}
++
++	return NOTIFY_OK;
++}
++
++static int qcom_sns_reg_probe_once(struct auxiliary_device *auxdev)
++{
++	void *cookie;
++	int ret;
++	const char *target_ssr_name;
++
++	__qcom_sns_reg_data->first_auxdev = auxdev;
++
++	/*
++	 * Determine if current SoC supports Sensor Manager (SMGR) at all.
++	 * And if supports, on which remote processor it should be running.
++	 */
++	__qcom_sns_reg_data->target_rproc = get_target_rproc();
++	switch (__qcom_sns_reg_data->target_rproc)
++	{
++	case RPROC_ADSP:
++		target_ssr_name = "lpass";
++		break;
++	case RPROC_SLPI:
++		target_ssr_name = "dsps";
++		break;
++	case NOT_SUPPORTED:
++		dev_warn_once(&auxdev->dev, "Sensor Manager is not supported on current SoC.");
++		return -ENODEV;
++	}
++
++	/*
++	 * Load firmware (sensors registry config) first.
++	 * Without firmware we cannot do anything useful.
++	 */
++	ret = qcom_sns_reg_load_firmware(auxdev);
++	if (ret)
++		return ret;
++
++	__qcom_sns_reg_data->ssr_nb.notifier_call = qcom_sns_reg_ssr_notify_handler;
++	cookie = qcom_register_ssr_notifier(target_ssr_name, &__qcom_sns_reg_data->ssr_nb);
++	if (IS_ERR(cookie)) {
++		ret = PTR_ERR(cookie);
++		dev_err(&auxdev->dev, "failed to register remoteproc status notifier: %d\n", ret);
++		goto err_cleanup;
++	}
++	__qcom_sns_reg_data->ssr_cookie = cookie;
++
++	ret = qmi_handle_init(&__qcom_sns_reg_data->svc_handle,
++		SNS_REG_GROUP_RESP_MAX_LEN, NULL, qcom_sns_reg_msg_handlers);
++	if (ret) {
++		dev_err(&auxdev->dev, "failed to init QMI handle %d\n", ret);
++		goto err_cleanup;
++	}
++
++	INIT_WORK(&__qcom_sns_reg_data->work, qcom_sns_reg_ssr_notifier_work);
++	return 0;
++
++err_cleanup:
++	if (__qcom_sns_reg_data->fw) {
++		release_firmware(__qcom_sns_reg_data->fw);
++		__qcom_sns_reg_data->fw = NULL;
++	}
++	if (__qcom_sns_reg_data->ssr_cookie) {
++		qcom_unregister_ssr_notifier(__qcom_sns_reg_data->ssr_cookie, &__qcom_sns_reg_data->ssr_nb);
++		__qcom_sns_reg_data->ssr_cookie = NULL;
++	}
++	return ret;
++}
++
++static int qcom_sns_reg_probe(struct auxiliary_device *auxdev,
++			      const struct auxiliary_device_id *id)
++{
++	struct qcom_sns_reg_data *data;
++	int ret = 0;
++
++	/*
++	 * This probe() function might be called from multiple remoteproc
++	 * startup procedures, but we need to initialize only once
++	 */
++
++	mutex_lock(&qcom_sns_reg_mutex);
++
++	if (!__qcom_sns_reg_data) {
++		data = kzalloc(sizeof(*data), GFP_KERNEL);
++		if (!data) {
++			ret = -ENOMEM;
++		} else {
++			__qcom_sns_reg_data = data;
++			refcount_set(&__qcom_sns_reg_data->refcnt, 1);
++
++			ret = qcom_sns_reg_probe_once(auxdev);
++			if (ret) {
++				/* Probe failed, probably because no firmware was found */
++				__qcom_sns_reg_data = NULL;
++				kfree(data);
++				mutex_unlock(&qcom_sns_reg_mutex);
++				return dev_err_probe(&auxdev->dev, ret, "qcom_sns_reg probe failed!");
++			}
++		}
++	} else {
++		/* For 2nd, 3rd,.. init just increase reference count */
++		refcount_inc(&__qcom_sns_reg_data->refcnt);
++	}
++
++	if (__qcom_sns_reg_data) {
++		auxiliary_set_drvdata(auxdev, __qcom_sns_reg_data);
++
++		/*
++		 * Maybe we can already start our QMI service? For example,
++		 * we were started by ADSP startup and our target rproc is ADSP.
++		 * There might be different situation: we were started by ADSP,
++		 * but need to wait for SLPI.
++		 */
++		qcom_sns_reg_maybe_start();
++	}
++
++	mutex_unlock(&qcom_sns_reg_mutex);
++	return ret;
++}
++
++static void qcom_sns_reg_remove(struct auxiliary_device *auxdev)
++{
++	struct qcom_sns_reg_data *data;
++
++	data = auxiliary_get_drvdata(auxdev);
++	if (!data)
++		return;
++
++	if (refcount_dec_and_mutex_lock(&data->refcnt, &qcom_sns_reg_mutex)) {
++		__qcom_sns_reg_data = NULL;
++
++		qcom_unregister_ssr_notifier(data->ssr_cookie, &data->ssr_nb);
++
++		/* The server is removed automatically */
++		qmi_handle_release(&data->svc_handle);
++
++		release_firmware(data->fw);
++
++		kfree(data);
++
++		mutex_unlock(&qcom_sns_reg_mutex);
++	}
++}
++
++static const struct auxiliary_device_id qcom_sns_reg_table[] = {
++	{ .name = "qcom_common.sns-reg" },
++	{},
++};
++
++MODULE_DEVICE_TABLE(auxiliary, qcom_sns_reg_table);
++ 
++static struct auxiliary_driver qcom_sns_reg_drv = {
++	.name = "qcom-sns-reg",
++	.id_table = qcom_sns_reg_table,
++	.probe = qcom_sns_reg_probe,
++	.remove = qcom_sns_reg_remove,
++};
++
++module_auxiliary_driver(qcom_sns_reg_drv);
++
++MODULE_DESCRIPTION("Qualcomm Sensors Registry");
++MODULE_LICENSE("GPL");
+--- a/drivers/iio/common/qcom_smgr/Kconfig
++++ b/drivers/iio/common/qcom_smgr/Kconfig
+@@ -0,0 +1,16 @@
++#
++# Qualcomm Sensor Manager IIO
++#
++
++config IIO_QCOM_SMGR
++	tristate "Qualcomm SSC Sensor Manager"
++	depends on ARCH_QCOM
++	depends on QCOM_RPROC_COMMON
++	select QCOM_QMI_HELPERS
++	select IIO_BUFFER
++	help
++	  Say yes here to build core support for the Sensor Manager (SMGR)
++	  service provided by the Qualcomm Snapdragon Sensor Core (SSC).
++
++	  To compile this driver as a module, choose M here: the
++	  module will be called smgr.
+--- a/drivers/iio/common/qcom_smgr/Makefile
++++ b/drivers/iio/common/qcom_smgr/Makefile
+@@ -0,0 +1,7 @@
++# SPDX-License-Identifier: GPL-2.0
++#
++# Makefile for Qualcomm Sensor Manager driver
++#
++
++obj-$(CONFIG_IIO_QCOM_SMGR)	+= smgr.o
++smgr-y				:= qcom_smgr.o qmi/sns_smgr.o
+--- a/drivers/iio/common/qcom_smgr/qmi/sns_smgr.c
++++ b/drivers/iio/common/qcom_smgr/qmi/sns_smgr.c
+@@ -0,0 +1,713 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * QMI element info arrays and helper functions for Qualcomm Sensor Manager
++ *
++ * Copyright (c) 2021, Yassine Oudjana <y.oudjana@protonmail.com>
++ */
++
++#include <linux/iio/common/qcom_smgr.h>
++#include <linux/module.h>
++#include <linux/soc/qcom/qmi.h>
++#include <linux/types.h>
++
++#include "sns_smgr.h"
++
++static const struct qmi_elem_info sns_smgr_all_sensor_info_ei[] = {
++	{
++		.data_type = QMI_UNSIGNED_1_BYTE,
++		.elem_len = 1,
++		.elem_size = sizeof_field(struct sns_smgr_all_sensor_info, id),
++		.array_type = NO_ARRAY,
++		.offset = offsetof(struct sns_smgr_all_sensor_info, id),
++	},
++	{
++		.data_type = QMI_DATA_LEN,
++		.elem_len = 1,
++		.elem_size =
++			sizeof_field(struct sns_smgr_all_sensor_info, type_len),
++		.array_type = NO_ARRAY,
++		.offset = offsetof(struct sns_smgr_all_sensor_info, type_len),
++	},
++	{
++		.data_type = QMI_UNSIGNED_1_BYTE,
++		.elem_len = SNS_SMGR_SENSOR_TYPE_MAX_LEN,
++		.elem_size = sizeof(char),
++		.array_type = VAR_LEN_ARRAY,
++		.offset = offsetof(struct sns_smgr_all_sensor_info, type),
++	},
++	{
++		.data_type = QMI_EOTI,
++	},
++};
++
++const struct qmi_elem_info sns_smgr_all_sensor_info_resp_ei[] = {
++	{
++		.data_type = QMI_UNSIGNED_2_BYTE,
++		.elem_len = 1,
++		.elem_size = sizeof_field(struct sns_smgr_all_sensor_info_resp,
++					  result),
++		.array_type = NO_ARRAY,
++		.tlv_type = 0x02,
++		.offset =
++			offsetof(struct sns_smgr_all_sensor_info_resp, result),
++	},
++	{
++		.data_type = QMI_DATA_LEN,
++		.elem_len = 1,
++		.elem_size = sizeof_field(struct sns_smgr_all_sensor_info_resp,
++					  item_len),
++		.array_type = NO_ARRAY,
++		.tlv_type = 0x03,
++		.offset = offsetof(struct sns_smgr_all_sensor_info_resp,
++				   item_len),
++	},
++	{
++		.data_type = QMI_STRUCT,
++		.elem_len = SNS_SMGR_ALL_SENSOR_INFO_MAX_LEN,
++		.elem_size = sizeof(struct sns_smgr_all_sensor_info),
++		.array_type = VAR_LEN_ARRAY,
++		.tlv_type = 0x03,
++		.offset = offsetof(struct sns_smgr_all_sensor_info_resp, items),
++		.ei_array = sns_smgr_all_sensor_info_ei,
++	},
++	{
++		.data_type = QMI_EOTI,
++	},
++};
++EXPORT_SYMBOL_GPL(sns_smgr_all_sensor_info_resp_ei);
++
++const struct qmi_elem_info sns_smgr_single_sensor_info_req_ei[] = {
++	{
++		.data_type = QMI_UNSIGNED_1_BYTE,
++		.elem_len = 1,
++		.elem_size = sizeof_field(
++			struct sns_smgr_single_sensor_info_req, sensor_id),
++		.array_type = NO_ARRAY,
++		.tlv_type = 0x01,
++		.offset = offsetof(struct sns_smgr_single_sensor_info_req,
++				   sensor_id),
++	},
++	{
++		.data_type = QMI_EOTI,
++	},
++};
++EXPORT_SYMBOL_GPL(sns_smgr_single_sensor_info_req_ei);
++
++static const struct qmi_elem_info sns_smgr_single_sensor_info_data_type_ei[] = {
++	{
++		.data_type = QMI_UNSIGNED_1_BYTE,
++		.elem_len = 1,
++		.elem_size = sizeof_field(
++			struct sns_smgr_single_sensor_info_data_type,
++			sensor_id),
++		.array_type = NO_ARRAY,
++		.offset = offsetof(struct sns_smgr_single_sensor_info_data_type,
++				   sensor_id),
++	},
++	{
++		.data_type = QMI_UNSIGNED_1_BYTE,
++		.elem_len = 1,
++		.elem_size = sizeof_field(
++			struct sns_smgr_single_sensor_info_data_type,
++			data_type),
++		.array_type = NO_ARRAY,
++		.offset = offsetof(struct sns_smgr_single_sensor_info_data_type,
++				   data_type),
++	},
++	{
++		.data_type = QMI_DATA_LEN,
++		.elem_len = 1,
++		.elem_size = sizeof_field(
++			struct sns_smgr_single_sensor_info_data_type, name_len),
++		.array_type = NO_ARRAY,
++		.offset = offsetof(struct sns_smgr_single_sensor_info_data_type,
++				   name_len),
++	},
++	{
++		.data_type = QMI_UNSIGNED_1_BYTE,
++		.elem_len = 0xff,
++		.elem_size = sizeof(char),
++		.array_type = VAR_LEN_ARRAY,
++		.offset = offsetof(struct sns_smgr_single_sensor_info_data_type,
++				   name),
++	},
++	{
++		.data_type = QMI_DATA_LEN,
++		.elem_len = 1,
++		.elem_size = sizeof_field(
++			struct sns_smgr_single_sensor_info_data_type,
++			vendor_len),
++		.array_type = NO_ARRAY,
++		.offset = offsetof(struct sns_smgr_single_sensor_info_data_type,
++				   vendor_len),
++	},
++	{
++		.data_type = QMI_UNSIGNED_1_BYTE,
++		.elem_len = 0xff,
++		.elem_size = sizeof(char),
++		.array_type = VAR_LEN_ARRAY,
++		.offset = offsetof(struct sns_smgr_single_sensor_info_data_type,
++				   vendor),
++	},
++	{
++		.data_type = QMI_UNSIGNED_4_BYTE,
++		.elem_len = 1,
++		.elem_size = sizeof_field(
++			struct sns_smgr_single_sensor_info_data_type, val1),
++		.array_type = NO_ARRAY,
++		.offset = offsetof(struct sns_smgr_single_sensor_info_data_type,
++				   val1),
++	},
++	{
++		.data_type = QMI_UNSIGNED_2_BYTE,
++		.elem_len = 1,
++		.elem_size = sizeof_field(
++			struct sns_smgr_single_sensor_info_data_type,
++			max_sample_rate_hz),
++		.array_type = NO_ARRAY,
++		.offset = offsetof(struct sns_smgr_single_sensor_info_data_type,
++				   max_sample_rate_hz),
++	},
++	{
++		.data_type = QMI_UNSIGNED_2_BYTE,
++		.elem_len = 1,
++		.elem_size = sizeof_field(
++			struct sns_smgr_single_sensor_info_data_type, val2),
++		.array_type = NO_ARRAY,
++		.offset = offsetof(struct sns_smgr_single_sensor_info_data_type,
++				   val2),
++	},
++	{
++		.data_type = QMI_UNSIGNED_2_BYTE,
++		.elem_len = 1,
++		.elem_size = sizeof_field(
++			struct sns_smgr_single_sensor_info_data_type,
++			current_ua),
++		.array_type = NO_ARRAY,
++		.offset = offsetof(struct sns_smgr_single_sensor_info_data_type,
++				   current_ua),
++	},
++	{
++		.data_type = QMI_UNSIGNED_4_BYTE,
++		.elem_len = 1,
++		.elem_size = sizeof_field(
++			struct sns_smgr_single_sensor_info_data_type, range),
++		.array_type = NO_ARRAY,
++		.offset = offsetof(struct sns_smgr_single_sensor_info_data_type,
++				   range),
++	},
++	{
++		.data_type = QMI_UNSIGNED_4_BYTE,
++		.elem_len = 1,
++		.elem_size = sizeof_field(
++			struct sns_smgr_single_sensor_info_data_type,
++			resolution),
++		.array_type = NO_ARRAY,
++		.offset = offsetof(struct sns_smgr_single_sensor_info_data_type,
++				   resolution),
++	},
++	{
++		.data_type = QMI_EOTI,
++	},
++};
++
++static const struct qmi_elem_info sns_smgr_single_sensor_info_native_sample_rates_ei[] = {
++	{
++		.data_type = QMI_DATA_LEN,
++		.elem_len = 1,
++		.elem_size = sizeof_field(
++			struct sns_smgr_single_sensor_info_native_sample_rates, rate_count),
++		.array_type = NO_ARRAY,
++		.offset = offsetof(struct sns_smgr_single_sensor_info_native_sample_rates,
++				   rate_count),
++	},
++	{
++		.data_type = QMI_UNSIGNED_2_BYTE,
++		.elem_len = SNS_SMGR_NATIVE_SAMPLE_RATES_MAX_LEN,
++		.elem_size = sizeof(u16),
++		.array_type = VAR_LEN_ARRAY,
++		.offset = offsetof(struct sns_smgr_single_sensor_info_native_sample_rates,
++				   rates),
++	},
++	{
++		.data_type = QMI_EOTI,
++	},
++};
++
++const struct qmi_elem_info sns_smgr_single_sensor_info_resp_ei[] = {
++	{
++		.data_type = QMI_UNSIGNED_2_BYTE,
++		.elem_len = 1,
++		.elem_size = sizeof_field(
++			struct sns_smgr_single_sensor_info_resp, result),
++		.array_type = NO_ARRAY,
++		.tlv_type = 0x02,
++		.offset = offsetof(struct sns_smgr_single_sensor_info_resp,
++				   result),
++	},
++	{
++		.data_type = QMI_DATA_LEN,
++		.elem_len = 1,
++		.elem_size = sizeof_field(
++			struct sns_smgr_single_sensor_info_resp, data_type_len),
++		.array_type = NO_ARRAY,
++		.tlv_type = 0x03,
++		.offset = offsetof(struct sns_smgr_single_sensor_info_resp,
++				   data_type_len),
++	},
++	{
++		.data_type = QMI_STRUCT,
++		.elem_len = SNS_SMGR_DATA_TYPE_COUNT,
++		.elem_size =
++			sizeof(struct sns_smgr_single_sensor_info_data_type),
++		.array_type = VAR_LEN_ARRAY,
++		.tlv_type = 0x03,
++		.offset = offsetof(struct sns_smgr_single_sensor_info_resp,
++				   data_types),
++		.ei_array = sns_smgr_single_sensor_info_data_type_ei,
++	},
++	{
++		.data_type = QMI_DATA_LEN,
++		.elem_len = 1,
++		.elem_size = sizeof_field(
++			struct sns_smgr_single_sensor_info_resp, data1_len),
++		.array_type = NO_ARRAY,
++		.tlv_type = 0x10,
++		.offset = offsetof(struct sns_smgr_single_sensor_info_resp,
++				   data1_len),
++	},
++	{
++		.data_type = QMI_UNSIGNED_4_BYTE,
++		.elem_len = SNS_SMGR_DATA_TYPE_COUNT,
++		.elem_size = sizeof(u32),
++		.array_type = VAR_LEN_ARRAY,
++		.tlv_type = 0x10,
++		.offset = offsetof(struct sns_smgr_single_sensor_info_resp,
++				   data1),
++	},
++	{
++		.data_type = QMI_UNSIGNED_4_BYTE,
++		.elem_len = 1,
++		.elem_size = sizeof_field(
++			struct sns_smgr_single_sensor_info_resp, data2),
++		.array_type = NO_ARRAY,
++		.tlv_type = 0x11,
++		.offset = offsetof(struct sns_smgr_single_sensor_info_resp,
++				   data2),
++	},
++	{
++		.data_type = QMI_DATA_LEN,
++		.elem_len = 1,
++		.elem_size = sizeof_field(
++			struct sns_smgr_single_sensor_info_resp, data3_len),
++		.array_type = NO_ARRAY,
++		.tlv_type = 0x12,
++		.offset = offsetof(struct sns_smgr_single_sensor_info_resp,
++				   data3_len),
++	},
++	{
++		.data_type = QMI_UNSIGNED_8_BYTE,
++		.elem_len = SNS_SMGR_DATA_TYPE_COUNT,
++		.elem_size = sizeof(u64),
++		.array_type = VAR_LEN_ARRAY,
++		.tlv_type = 0x12,
++		.offset = offsetof(struct sns_smgr_single_sensor_info_resp,
++				   data3),
++	},
++	{
++		.data_type = QMI_DATA_LEN,
++		.elem_len = 1,
++		.elem_size = sizeof_field(
++			struct sns_smgr_single_sensor_info_resp,
++			native_sample_rates_len),
++		.array_type = NO_ARRAY,
++		.tlv_type = 0x13,
++		.offset = offsetof(struct sns_smgr_single_sensor_info_resp,
++				   native_sample_rates_len),
++	},
++	{
++		.data_type = QMI_STRUCT,
++		.elem_len = SNS_SMGR_DATA_TYPE_COUNT,
++		.elem_size = sizeof(
++			struct sns_smgr_single_sensor_info_native_sample_rates),
++		.array_type = VAR_LEN_ARRAY,
++		.tlv_type = 0x13,
++		.offset = offsetof(struct sns_smgr_single_sensor_info_resp,
++				   native_sample_rates),
++		.ei_array = sns_smgr_single_sensor_info_native_sample_rates_ei,
++	},
++	{
++		.data_type = QMI_DATA_LEN,
++		.elem_len = 1,
++		.elem_size = sizeof_field(
++			struct sns_smgr_single_sensor_info_resp, data5_len),
++		.array_type = NO_ARRAY,
++		.tlv_type = 0x14,
++		.offset = offsetof(struct sns_smgr_single_sensor_info_resp,
++				   data5_len),
++	},
++	{
++		.data_type = QMI_UNSIGNED_4_BYTE,
++		.elem_len = SNS_SMGR_DATA_TYPE_COUNT,
++		.elem_size = sizeof(u32),
++		.array_type = VAR_LEN_ARRAY,
++		.tlv_type = 0x14,
++		.offset = offsetof(struct sns_smgr_single_sensor_info_resp,
++				   data5),
++	},
++	{
++		.data_type = QMI_EOTI,
++	},
++};
++EXPORT_SYMBOL_GPL(sns_smgr_single_sensor_info_resp_ei);
++
++static const struct qmi_elem_info sns_smgr_buffering_req_item_ei[] = {
++	{
++		.data_type = QMI_UNSIGNED_1_BYTE,
++		.elem_len = 1,
++		.elem_size = sizeof_field(struct sns_smgr_buffering_req_item,
++					  sensor_id),
++		.array_type = NO_ARRAY,
++		.offset =
++			offsetof(struct sns_smgr_buffering_req_item, sensor_id),
++	},
++	{
++		.data_type = QMI_UNSIGNED_1_BYTE,
++		.elem_len = 1,
++		.elem_size = sizeof_field(struct sns_smgr_buffering_req_item,
++					  data_type),
++		.array_type = NO_ARRAY,
++		.offset =
++			offsetof(struct sns_smgr_buffering_req_item, data_type),
++	},
++	{
++		.data_type = QMI_UNSIGNED_2_BYTE,
++		.elem_len = 1,
++		.elem_size = sizeof_field(struct sns_smgr_buffering_req_item,
++					  val1),
++		.array_type = NO_ARRAY,
++		.offset = offsetof(struct sns_smgr_buffering_req_item,
++				   val1),
++	},
++	{
++		.data_type = QMI_UNSIGNED_2_BYTE,
++		.elem_len = 1,
++		.elem_size = sizeof_field(struct sns_smgr_buffering_req_item,
++					  sampling_rate),
++		.array_type = NO_ARRAY,
++		.offset = offsetof(struct sns_smgr_buffering_req_item,
++				   sampling_rate),
++	},
++	{
++		.data_type = QMI_UNSIGNED_2_BYTE,
++		.elem_len = 1,
++		.elem_size = sizeof_field(struct sns_smgr_buffering_req_item,
++					  val2),
++		.array_type = NO_ARRAY,
++		.offset = offsetof(struct sns_smgr_buffering_req_item,
++				   val2),
++	},
++	{
++		.data_type = QMI_EOTI,
++	},
++};
++
++static const struct qmi_elem_info sns_smgr_buffering_req_notify_suspend_ei[] = {
++	{
++		.data_type = QMI_UNSIGNED_2_BYTE,
++		.elem_len = 1,
++		.elem_size = sizeof_field(
++			struct sns_smgr_buffering_req_notify_suspend,
++			proc_type),
++		.array_type = NO_ARRAY,
++		.offset = offsetof(struct sns_smgr_buffering_req_notify_suspend,
++				   proc_type),
++	},
++	{
++		.data_type = QMI_UNSIGNED_2_BYTE,
++		.elem_len = 1,
++		.elem_size = sizeof_field(
++			struct sns_smgr_buffering_req_notify_suspend,
++			send_indications_during_suspend),
++		.array_type = NO_ARRAY,
++		.offset = offsetof(struct sns_smgr_buffering_req_notify_suspend,
++				   send_indications_during_suspend),
++	},
++	{
++		.data_type = QMI_EOTI,
++	},
++};
++
++const struct qmi_elem_info sns_smgr_buffering_req_ei[] = {
++	{
++		.data_type = QMI_UNSIGNED_1_BYTE,
++		.elem_len = 1,
++		.elem_size =
++			sizeof_field(struct sns_smgr_buffering_req, report_id),
++		.array_type = NO_ARRAY,
++		.tlv_type = 0x01,
++		.offset = offsetof(struct sns_smgr_buffering_req, report_id),
++	},
++	{
++		.data_type = QMI_UNSIGNED_1_BYTE,
++		.elem_len = 1,
++		.elem_size =
++			sizeof_field(struct sns_smgr_buffering_req, action),
++		.array_type = NO_ARRAY,
++		.tlv_type = 0x02,
++		.offset = offsetof(struct sns_smgr_buffering_req, action),
++	},
++	{
++		.data_type = QMI_UNSIGNED_4_BYTE,
++		.elem_len = 1,
++		.elem_size = sizeof_field(struct sns_smgr_buffering_req,
++					  report_rate),
++		.array_type = NO_ARRAY,
++		.tlv_type = 0x03,
++		.offset = offsetof(struct sns_smgr_buffering_req, report_rate),
++	},
++	{
++		.data_type = QMI_DATA_LEN,
++		.elem_len = 1,
++		.elem_size =
++			sizeof_field(struct sns_smgr_buffering_req, item_len),
++		.array_type = NO_ARRAY,
++		.tlv_type = 0x04,
++		.offset = offsetof(struct sns_smgr_buffering_req, item_len),
++	},
++	{
++		.data_type = QMI_STRUCT,
++		.elem_len = SNS_SMGR_DATA_TYPE_COUNT,
++		.elem_size = sizeof(struct sns_smgr_buffering_req_item),
++		.array_type = VAR_LEN_ARRAY,
++		.tlv_type = 0x04,
++		.offset = offsetof(struct sns_smgr_buffering_req, items),
++		.ei_array = sns_smgr_buffering_req_item_ei,
++	},
++	{
++		.data_type = QMI_OPT_FLAG,
++		.elem_len = 1,
++		.elem_size = sizeof_field(struct sns_smgr_buffering_req,
++					  notify_suspend_valid),
++		.array_type = NO_ARRAY,
++		.tlv_type = 0x10,
++		.offset = offsetof(struct sns_smgr_buffering_req,
++				   notify_suspend_valid),
++	},
++	{
++		.data_type = QMI_STRUCT,
++		.elem_len = 1,
++		.elem_size = sizeof_field(struct sns_smgr_buffering_req,
++					  notify_suspend),
++		.array_type = NO_ARRAY,
++		.tlv_type = 0x10,
++		.offset =
++			offsetof(struct sns_smgr_buffering_req, notify_suspend),
++		.ei_array = sns_smgr_buffering_req_notify_suspend_ei,
++	},
++	{
++		.data_type = QMI_EOTI,
++	},
++};
++EXPORT_SYMBOL_GPL(sns_smgr_buffering_req_ei);
++
++const struct qmi_elem_info sns_smgr_buffering_resp_ei[] = {
++	{
++		.data_type = QMI_UNSIGNED_2_BYTE,
++		.elem_len = 1,
++		.elem_size =
++			sizeof_field(struct sns_smgr_buffering_resp, result),
++		.array_type = NO_ARRAY,
++		.tlv_type = 0x02,
++		.offset = offsetof(struct sns_smgr_buffering_resp, result),
++	},
++	{
++		.data_type = QMI_UNSIGNED_1_BYTE,
++		.elem_len = 1,
++		.elem_size =
++			sizeof_field(struct sns_smgr_buffering_resp, report_id),
++		.array_type = NO_ARRAY,
++		.tlv_type = 0x10,
++		.offset = offsetof(struct sns_smgr_buffering_resp, report_id),
++	},
++	{
++		.data_type = QMI_UNSIGNED_1_BYTE,
++		.elem_len = 1,
++		.elem_size =
++			sizeof_field(struct sns_smgr_buffering_resp, ack_nak),
++		.array_type = NO_ARRAY,
++		.tlv_type = 0x11,
++		.offset = offsetof(struct sns_smgr_buffering_resp, ack_nak),
++	},
++	{
++		.data_type = QMI_EOTI,
++	},
++};
++EXPORT_SYMBOL_GPL(sns_smgr_buffering_resp_ei);
++
++static const struct qmi_elem_info sns_smgr_buffering_report_metadata_ei[] = {
++	{
++		.data_type = QMI_UNSIGNED_4_BYTE,
++		.elem_len = 1,
++		.elem_size = sizeof_field(
++			struct sns_smgr_buffering_report_metadata, val1),
++		.array_type = NO_ARRAY,
++		.offset = offsetof(struct sns_smgr_buffering_report_metadata,
++				   val1),
++	},
++	{
++		.data_type = QMI_UNSIGNED_1_BYTE,
++		.elem_len = 1,
++		.elem_size =
++			sizeof_field(struct sns_smgr_buffering_report_metadata,
++				     sample_count),
++		.array_type = NO_ARRAY,
++		.offset = offsetof(struct sns_smgr_buffering_report_metadata,
++				   sample_count),
++	},
++	{
++		.data_type = QMI_UNSIGNED_4_BYTE,
++		.elem_len = 1,
++		.elem_size = sizeof_field(
++			struct sns_smgr_buffering_report_metadata, timestamp),
++		.array_type = NO_ARRAY,
++		.offset = offsetof(struct sns_smgr_buffering_report_metadata,
++				   timestamp),
++	},
++	{
++		.data_type = QMI_UNSIGNED_4_BYTE,
++		.elem_len = 1,
++		.elem_size = sizeof_field(
++			struct sns_smgr_buffering_report_metadata, val2),
++		.array_type = NO_ARRAY,
++		.offset = offsetof(struct sns_smgr_buffering_report_metadata,
++				   val2),
++	},
++	{
++		.data_type = QMI_EOTI,
++	},
++};
++
++static const struct qmi_elem_info sns_smgr_buffering_report_sample_ei[] = {
++	{
++		.data_type = QMI_UNSIGNED_4_BYTE,
++		.elem_len = 3,
++		.elem_size = sizeof(u32),
++		.array_type = STATIC_ARRAY,
++		.offset = offsetof(struct sns_smgr_buffering_report_sample,
++				   values),
++	},
++	{
++		.data_type = QMI_UNSIGNED_1_BYTE,
++		.elem_len = 1,
++		.elem_size = sizeof_field(
++			struct sns_smgr_buffering_report_sample, val1),
++		.array_type = NO_ARRAY,
++		.offset =
++			offsetof(struct sns_smgr_buffering_report_sample, val1),
++	},
++	{
++		.data_type = QMI_UNSIGNED_1_BYTE,
++		.elem_len = 1,
++		.elem_size = sizeof_field(
++			struct sns_smgr_buffering_report_sample, val2),
++		.array_type = NO_ARRAY,
++		.offset =
++			offsetof(struct sns_smgr_buffering_report_sample, val2),
++	},
++	{
++		.data_type = QMI_UNSIGNED_2_BYTE,
++		.elem_len = 1,
++		.elem_size = sizeof_field(
++			struct sns_smgr_buffering_report_sample, val3),
++		.array_type = NO_ARRAY,
++		.offset =
++			offsetof(struct sns_smgr_buffering_report_sample, val3),
++	},
++	{
++		.data_type = QMI_EOTI,
++	},
++};
++
++const struct qmi_elem_info sns_smgr_buffering_report_ind_ei[] = {
++	{
++		.data_type = QMI_UNSIGNED_1_BYTE,
++		.elem_len = 1,
++		.elem_size = sizeof_field(struct sns_smgr_buffering_report_ind,
++					  report_id),
++		.array_type = NO_ARRAY,
++		.tlv_type = 0x01,
++		.offset = offsetof(struct sns_smgr_buffering_report_ind,
++				   report_id),
++	},
++	{
++		.data_type = QMI_STRUCT,
++		.elem_len = 1,
++		.elem_size = sizeof_field(struct sns_smgr_buffering_report_ind,
++					  metadata),
++		.array_type = NO_ARRAY,
++		.tlv_type = 0x02,
++		.offset = offsetof(struct sns_smgr_buffering_report_ind,
++				   metadata),
++		.ei_array = sns_smgr_buffering_report_metadata_ei,
++	},
++	{
++		.data_type = QMI_DATA_LEN,
++		.elem_len = 1,
++		.elem_size = sizeof_field(struct sns_smgr_buffering_report_ind,
++					  samples_len),
++		.array_type = NO_ARRAY,
++		.tlv_type = 0x03,
++		.offset = offsetof(struct sns_smgr_buffering_report_ind,
++				   samples_len),
++	},
++	{
++		.data_type = QMI_STRUCT,
++		.elem_len = SNS_SMGR_SAMPLES_MAX_LEN,
++		.elem_size = sizeof(struct sns_smgr_buffering_report_sample),
++		.array_type = VAR_LEN_ARRAY,
++		.tlv_type = 0x03,
++		.offset =
++			offsetof(struct sns_smgr_buffering_report_ind, samples),
++		.ei_array = sns_smgr_buffering_report_sample_ei,
++	},
++	{
++		.data_type = QMI_UNSIGNED_1_BYTE,
++		.elem_len = 1,
++		.elem_size = sizeof_field(struct sns_smgr_buffering_report_ind,
++					  val2),
++		.array_type = NO_ARRAY,
++		.tlv_type = 0x10,
++		.offset = offsetof(struct sns_smgr_buffering_report_ind, val2),
++	},
++	{
++		.data_type = QMI_EOTI,
++	},
++};
++EXPORT_SYMBOL_GPL(sns_smgr_buffering_report_ind_ei);
++
++static const char *smgr_sensor_type_names[SNS_SMGR_SENSOR_TYPE_COUNT] = {
++	[SNS_SMGR_SENSOR_TYPE_ACCEL] = "ACCEL",
++	[SNS_SMGR_SENSOR_TYPE_GYRO] = "GYRO",
++	[SNS_SMGR_SENSOR_TYPE_MAG] = "MAG",
++	[SNS_SMGR_SENSOR_TYPE_PROX_LIGHT] = "PROX_LIGHT",
++	[SNS_SMGR_SENSOR_TYPE_PRESSURE] = "PRESSURE",
++	[SNS_SMGR_SENSOR_TYPE_HALL_EFFECT] = "HALL_EFFECT"
++};
++
++enum qcom_smgr_sensor_type sns_smgr_sensor_type_from_str(const char *str)
++{
++	enum qcom_smgr_sensor_type i;
++
++	for (i = SNS_SMGR_SENSOR_TYPE_UNKNOWN + 1;
++	     i < SNS_SMGR_SENSOR_TYPE_COUNT; i++)
++		if (!strcmp(str, smgr_sensor_type_names[i]))
++			return i;
++
++	return SNS_SMGR_SENSOR_TYPE_UNKNOWN;
++}
++EXPORT_SYMBOL_GPL(sns_smgr_sensor_type_from_str);
++
++MODULE_LICENSE("GPL");
++MODULE_AUTHOR("Yassine Oudjana <y.oudjana@protonmail.com>");
++MODULE_DESCRIPTION("QMI element info arrays and helper functions for Qualcomm Sensor Manager");
+--- a/drivers/iio/common/qcom_smgr/qmi/sns_smgr.h
++++ b/drivers/iio/common/qcom_smgr/qmi/sns_smgr.h
+@@ -0,0 +1,163 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++
++#ifndef __SSC_SNS_SMGR_H__
++#define __SSC_SNS_SMGR_H__
++
++#include <linux/iio/common/qcom_smgr.h>
++#include <linux/soc/qcom/qmi.h>
++#include <linux/types.h>
++
++/*
++ * The structures of QMI messages used by the service were determined
++ * purely by watching transactions between proprietary Android userspace
++ * components and SSC. along with comparing values reported by Android APIs
++ * to values received in response messages. Due to that, the purpose or
++ * meaning of many fields remains unknown. Such fields are named "val*",
++ * "data*" or similar. Furthermore, the true maximum sizes of some messages
++ * with unknown array fields may be different than defined here.
++ */
++
++#define SNS_SMGR_QMI_SVC_ID			0x0100
++#define SNS_SMGR_QMI_SVC_V1			1
++#define SNS_SMGR_QMI_INS_ID			50
++
++#define SNS_SMGR_ALL_SENSOR_INFO_MSG_ID		0x05
++#define SNS_SMGR_SINGLE_SENSOR_INFO_MSG_ID	0x06
++#define SNS_SMGR_BUFFERING_MSG_ID		0x21
++#define SNS_SMGR_BUFFERING_REPORT_MSG_ID	0x22
++
++#define SNS_SMGR_ALL_SENSOR_INFO_REQ_MAX_LEN		0x0
++#define SNS_SMGR_ALL_SENSOR_INFO_RESP_MAX_LEN		0x3e
++#define SNS_SMGR_SINGLE_SENSOR_INFO_REQ_MAX_LEN		0x4
++#define SNS_SMGR_SINGLE_SENSOR_INFO_RESP_MAX_LEN	0x110
++#define SNS_SMGR_BUFFERING_REQ_MAX_LEN			0x30
++#define SNS_SMGR_BUFFERING_RESP_MAX_LEN			0x1e
++
++/* TODO: find actual maximums */
++#define SNS_SMGR_ALL_SENSOR_INFO_MAX_LEN	0x10
++#define SNS_SMGR_SENSOR_TYPE_MAX_LEN		0x10
++#define SNS_SMGR_NATIVE_SAMPLE_RATES_MAX_LEN	0x20
++#define SNS_SMGR_SAMPLES_MAX_LEN		0x100
++
++enum sns_smgr_buffering_action {
++	SNS_SMGR_BUFFERING_ACTION_ADD	 = 1,
++	SNS_SMGR_BUFFERING_ACTION_DELETE = 2,
++};
++
++struct sns_smgr_all_sensor_info {
++	u8 id;
++	u8 type_len;
++	char type[SNS_SMGR_SENSOR_TYPE_MAX_LEN];
++};
++
++struct sns_smgr_all_sensor_info_resp {
++	u16 result;
++	u8 item_len;
++	struct sns_smgr_all_sensor_info items[SNS_SMGR_ALL_SENSOR_INFO_MAX_LEN];
++};
++
++struct sns_smgr_single_sensor_info_req {
++	u8 sensor_id;
++};
++
++struct sns_smgr_single_sensor_info_data_type {
++	u8 sensor_id;
++	u8 data_type;
++	u8 name_len;
++	char name[0xff];
++	u8 vendor_len;
++	char vendor[0xff];
++	/*
++	 * Might be separate u8 or u16 fields, but taken as a u32 it is seen
++	 * to hold the value 1 for all sensors in dumps.
++	 */
++	u32 val1;
++	u16 max_sample_rate_hz;
++	u16 val2;
++	u16 current_ua;
++	u32 range;
++	u32 resolution;
++};
++
++struct sns_smgr_single_sensor_info_native_sample_rates {
++	u8 rate_count;
++	u16 rates[SNS_SMGR_NATIVE_SAMPLE_RATES_MAX_LEN];
++};
++
++struct sns_smgr_single_sensor_info_resp {
++	u16 result;
++	u8 data_type_len;
++	struct sns_smgr_single_sensor_info_data_type data_types[SNS_SMGR_DATA_TYPE_COUNT];
++	u8 data1_len;
++	u32 data1[SNS_SMGR_DATA_TYPE_COUNT];
++	u32 data2;
++	u8 data3_len;
++	u64 data3[SNS_SMGR_DATA_TYPE_COUNT];
++	u8 native_sample_rates_len;
++	struct sns_smgr_single_sensor_info_native_sample_rates
++		native_sample_rates[SNS_SMGR_DATA_TYPE_COUNT];
++	u8 data5_len;
++	u32 data5[SNS_SMGR_DATA_TYPE_COUNT];
++};
++
++struct sns_smgr_buffering_req_item {
++	u8 sensor_id;
++	u8 data_type;
++	u16 val1;
++	u16 sampling_rate;
++	u16 val2;
++};
++
++struct sns_smgr_buffering_req_notify_suspend {
++	u16 proc_type;
++	u16 send_indications_during_suspend;
++};
++
++struct sns_smgr_buffering_req {
++	u8 report_id;
++	u8 action;
++	u32 report_rate;
++	u8 item_len;
++	struct sns_smgr_buffering_req_item items[SNS_SMGR_DATA_TYPE_COUNT];
++	u8 notify_suspend_valid;
++	struct sns_smgr_buffering_req_notify_suspend notify_suspend;
++};
++
++struct sns_smgr_buffering_resp {
++	u16 result;
++	u8 report_id;
++	u8 ack_nak;
++};
++
++struct sns_smgr_buffering_report_metadata {
++	u32 val1;
++	u8 sample_count;
++	u32 timestamp;
++	u32 val2;
++};
++
++struct sns_smgr_buffering_report_sample {
++	u32 values[3];
++	u8 val1;
++	u8 val2;
++	u16 val3;
++};
++
++struct sns_smgr_buffering_report_ind {
++	u8 report_id;
++	struct sns_smgr_buffering_report_metadata metadata;
++	u8 samples_len;
++	struct sns_smgr_buffering_report_sample samples[SNS_SMGR_SAMPLES_MAX_LEN];
++	u8 val2;
++};
++
++extern const struct qmi_elem_info sns_smgr_all_sensor_info_resp_ei[];
++extern const struct qmi_elem_info sns_smgr_single_sensor_info_req_ei[];
++extern const struct qmi_elem_info sns_smgr_single_sensor_info_resp_ei[];
++extern const struct qmi_elem_info sns_smgr_buffering_req_ei[];
++extern const struct qmi_elem_info sns_smgr_buffering_resp_ei[];
++extern const struct qmi_elem_info sns_smgr_buffering_report_ind_ei[];
++
++extern enum qcom_smgr_sensor_type sns_smgr_sensor_type_from_str(const char *str);
++
++#endif /* __SSC_SNS_SMGR_H__ */
+--- a/drivers/iio/accel/qcom_smgr_accel.c
++++ b/drivers/iio/accel/qcom_smgr_accel.c
+@@ -0,0 +1,138 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Qualcomm Sensor Manager accelerometer driver
++ *
++ * Copyright (c) 2022, Yassine Oudjana <y.oudjana@protonmail.com>
++ */
++
++#include <linux/mod_devicetable.h>
++#include <linux/platform_device.h>
++#include <linux/iio/buffer.h>
++#include <linux/iio/common/qcom_smgr.h>
++#include <linux/iio/iio.h>
++#include <linux/iio/kfifo_buf.h>
++
++static const struct iio_chan_spec qcom_smgr_accel_iio_channels[] = {
++	{
++		.type = IIO_ACCEL,
++		.modified = true,
++		.channel2 = IIO_MOD_X,
++		.scan_index = 0,
++		.scan_type = {
++			.sign = 's',
++			.realbits = 32,
++			.storagebits = 32,
++			.endianness = IIO_LE,
++		},
++		.info_mask_shared_by_type = BIT(IIO_CHAN_INFO_SCALE) |
++					    BIT(IIO_CHAN_INFO_SAMP_FREQ),
++		.ext_info = qcom_smgr_iio_ext_info
++	},
++	{
++		.type = IIO_ACCEL,
++		.modified = true,
++		.channel2 = IIO_MOD_Y,
++		.scan_index = 1,
++		.scan_type = {
++			.sign = 's',
++			.realbits = 32,
++			.storagebits = 32,
++			.endianness = IIO_LE,
++		},
++		.info_mask_shared_by_type = BIT(IIO_CHAN_INFO_SCALE) |
++					    BIT(IIO_CHAN_INFO_SAMP_FREQ),
++		.ext_info = qcom_smgr_iio_ext_info
++	},
++	{
++		.type = IIO_ACCEL,
++		.modified = true,
++		.channel2 = IIO_MOD_Z,
++		.scan_index = 2,
++		.scan_type = {
++			.sign = 's',
++			.realbits = 32,
++			.storagebits = 32,
++			.endianness = IIO_LE,
++		},
++		.info_mask_shared_by_type = BIT(IIO_CHAN_INFO_SCALE) |
++					    BIT(IIO_CHAN_INFO_SAMP_FREQ),
++		.ext_info = qcom_smgr_iio_ext_info
++	},
++	{
++		.type = IIO_TIMESTAMP,
++		.channel = -1,
++		.scan_index = 3,
++		.scan_type = {
++			.sign = 'u',
++			.realbits = 32,
++			.storagebits = 64,
++			.endianness = IIO_LE,
++		},
++	},
++};
++
++static int qcom_smgr_accel_probe(struct platform_device *pdev)
++{
++	struct iio_dev *iio_dev;
++	struct qcom_smgr_iio_priv *priv;
++	int ret;
++
++	iio_dev = devm_iio_device_alloc(&pdev->dev, sizeof(*priv));
++	if (!iio_dev)
++		return -ENOMEM;
++
++	priv = iio_priv(iio_dev);
++	priv->sensor = *(struct qcom_smgr_sensor **)pdev->dev.platform_data;
++	priv->sensor->iio_dev = iio_dev;
++
++	iio_dev->name = "qcom-smgr-accel";
++	iio_dev->info = &qcom_smgr_iio_info;
++	iio_dev->channels = qcom_smgr_accel_iio_channels;
++	iio_dev->num_channels = ARRAY_SIZE(qcom_smgr_accel_iio_channels);
++
++	ret = devm_iio_kfifo_buffer_setup(&pdev->dev, iio_dev,
++					  &qcom_smgr_buffer_ops);
++	if (ret) {
++		dev_err(&pdev->dev, "Failed to setup buffer: %pe\n",
++			ERR_PTR(ret));
++		return ret;
++	}
++
++	ret = devm_iio_device_register(&pdev->dev, iio_dev);
++	if (ret) {
++		dev_err(&pdev->dev, "Failed to register IIO device: %pe\n",
++			ERR_PTR(ret));
++		return ret;
++	}
++
++	platform_set_drvdata(pdev, priv->sensor);
++
++	return 0;
++}
++
++static void qcom_smgr_accel_remove(struct platform_device *pdev)
++{
++	struct qcom_smgr_sensor *sensor = platform_get_drvdata(pdev);
++
++	sensor->iio_dev = NULL;
++}
++
++static const struct platform_device_id qcom_smgr_accel_ids[] = {
++	{ .name = "qcom-smgr-accel" },
++	{ /* sentinel */ }
++};
++MODULE_DEVICE_TABLE(platform, qcom_smgr_accel_ids);
++
++static struct platform_driver qcom_smgr_accel_driver = {
++	.probe = qcom_smgr_accel_probe,
++	.remove = qcom_smgr_accel_remove,
++	.driver	= {
++		.name = "qcom_smgr_accel",
++	},
++	.id_table = qcom_smgr_accel_ids,
++};
++module_platform_driver(qcom_smgr_accel_driver);
++
++MODULE_AUTHOR("Yassine Oudjana <y.oudjana@protonmail.com>");
++MODULE_DESCRIPTION("Qualcomm Sensor Manager accelerometer driver");
++MODULE_LICENSE("GPL");
+--- a/drivers/iio/gyro/qcom_smgr_gyro.c
++++ b/drivers/iio/gyro/qcom_smgr_gyro.c
+@@ -0,0 +1,138 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Qualcomm Sensor Manager gyroscope driver
++ *
++ * Copyright (c) 2022, Yassine Oudjana <y.oudjana@protonmail.com>
++ */
++
++#include <linux/mod_devicetable.h>
++#include <linux/platform_device.h>
++#include <linux/iio/buffer.h>
++#include <linux/iio/common/qcom_smgr.h>
++#include <linux/iio/iio.h>
++#include <linux/iio/kfifo_buf.h>
++
++static const struct iio_chan_spec qcom_smgr_gyro_iio_channels[] = {
++	{
++		.type = IIO_ANGL_VEL,
++		.modified = true,
++		.channel2 = IIO_MOD_X,
++		.scan_index = 0,
++		.scan_type = {
++			.sign = 's',
++			.realbits = 32,
++			.storagebits = 32,
++			.endianness = IIO_LE,
++		},
++		.info_mask_shared_by_type = BIT(IIO_CHAN_INFO_SCALE) |
++					    BIT(IIO_CHAN_INFO_SAMP_FREQ),
++		.ext_info = qcom_smgr_iio_ext_info
++	},
++	{
++		.type = IIO_ANGL_VEL,
++		.modified = true,
++		.channel2 = IIO_MOD_Y,
++		.scan_index = 1,
++		.scan_type = {
++			.sign = 's',
++			.realbits = 32,
++			.storagebits = 32,
++			.endianness = IIO_LE,
++		},
++		.info_mask_shared_by_type = BIT(IIO_CHAN_INFO_SCALE) |
++					    BIT(IIO_CHAN_INFO_SAMP_FREQ),
++		.ext_info = qcom_smgr_iio_ext_info
++	},
++	{
++		.type = IIO_ANGL_VEL,
++		.modified = true,
++		.channel2 = IIO_MOD_Z,
++		.scan_index = 2,
++		.scan_type = {
++			.sign = 's',
++			.realbits = 32,
++			.storagebits = 32,
++			.endianness = IIO_LE,
++		},
++		.info_mask_shared_by_type = BIT(IIO_CHAN_INFO_SCALE) |
++					    BIT(IIO_CHAN_INFO_SAMP_FREQ),
++		.ext_info = qcom_smgr_iio_ext_info
++	},
++	{
++		.type = IIO_TIMESTAMP,
++		.channel = -1,
++		.scan_index = 3,
++		.scan_type = {
++			.sign = 'u',
++			.realbits = 32,
++			.storagebits = 64,
++			.endianness = IIO_LE,
++		},
++	},
++};
++
++static int qcom_smgr_gyro_probe(struct platform_device *pdev)
++{
++	struct iio_dev *iio_dev;
++	struct qcom_smgr_iio_priv *priv;
++	int ret;
++
++	iio_dev = devm_iio_device_alloc(&pdev->dev, sizeof(*priv));
++	if (!iio_dev)
++		return -ENOMEM;
++
++	priv = iio_priv(iio_dev);
++	priv->sensor = *(struct qcom_smgr_sensor **)pdev->dev.platform_data;
++	priv->sensor->iio_dev = iio_dev;
++
++	iio_dev->name = "qcom-smgr-gyro";
++	iio_dev->info = &qcom_smgr_iio_info;
++	iio_dev->channels = qcom_smgr_gyro_iio_channels;
++	iio_dev->num_channels = ARRAY_SIZE(qcom_smgr_gyro_iio_channels);
++
++	ret = devm_iio_kfifo_buffer_setup(&pdev->dev, iio_dev,
++					  &qcom_smgr_buffer_ops);
++	if (ret) {
++		dev_err(&pdev->dev, "Failed to setup buffer: %pe\n",
++			ERR_PTR(ret));
++		return ret;
++	}
++
++	ret = devm_iio_device_register(&pdev->dev, iio_dev);
++	if (ret) {
++		dev_err(&pdev->dev, "Failed to register IIO device: %pe\n",
++			ERR_PTR(ret));
++		return ret;
++	}
++
++	platform_set_drvdata(pdev, priv->sensor);
++
++	return 0;
++}
++
++static void qcom_smgr_gyro_remove(struct platform_device *pdev)
++{
++	struct qcom_smgr_sensor *sensor = platform_get_drvdata(pdev);
++
++	sensor->iio_dev = NULL;
++}
++
++static const struct platform_device_id qcom_smgr_gyro_ids[] = {
++	{ .name = "qcom-smgr-gyro" },
++	{ /* sentinel */ }
++};
++MODULE_DEVICE_TABLE(platform, qcom_smgr_gyro_ids);
++
++static struct platform_driver qcom_smgr_gyro_driver = {
++	.probe = qcom_smgr_gyro_probe,
++	.remove = qcom_smgr_gyro_remove,
++	.driver	= {
++		.name = "qcom_smgr_gyro",
++	},
++	.id_table = qcom_smgr_gyro_ids,
++};
++module_platform_driver(qcom_smgr_gyro_driver);
++
++MODULE_AUTHOR("Yassine Oudjana <y.oudjana@protonmail.com>");
++MODULE_DESCRIPTION("Qualcomm Sensor Manager gyroscope driver");
++MODULE_LICENSE("GPL");
+--- a/drivers/iio/magnetometer/qcom_smgr_mag.c
++++ b/drivers/iio/magnetometer/qcom_smgr_mag.c
+@@ -0,0 +1,138 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Qualcomm Sensor Manager magnetometer driver
++ *
++ * Copyright (c) 2022, Yassine Oudjana <y.oudjana@protonmail.com>
++ */
++
++#include <linux/mod_devicetable.h>
++#include <linux/platform_device.h>
++#include <linux/iio/buffer.h>
++#include <linux/iio/common/qcom_smgr.h>
++#include <linux/iio/iio.h>
++#include <linux/iio/kfifo_buf.h>
++
++static const struct iio_chan_spec qcom_smgr_mag_iio_channels[] = {
++	{
++		.type = IIO_MAGN,
++		.modified = true,
++		.channel2 = IIO_MOD_X,
++		.scan_index = 0,
++		.scan_type = {
++			.sign = 's',
++			.realbits = 32,
++			.storagebits = 32,
++			.endianness = IIO_LE,
++		},
++		.info_mask_shared_by_type = BIT(IIO_CHAN_INFO_SCALE) |
++					    BIT(IIO_CHAN_INFO_SAMP_FREQ),
++		.ext_info = qcom_smgr_iio_ext_info
++	},
++	{
++		.type = IIO_MAGN,
++		.modified = true,
++		.channel2 = IIO_MOD_Y,
++		.scan_index = 1,
++		.scan_type = {
++			.sign = 's',
++			.realbits = 32,
++			.storagebits = 32,
++			.endianness = IIO_LE,
++		},
++		.info_mask_shared_by_type = BIT(IIO_CHAN_INFO_SCALE) |
++					    BIT(IIO_CHAN_INFO_SAMP_FREQ),
++		.ext_info = qcom_smgr_iio_ext_info
++	},
++	{
++		.type = IIO_MAGN,
++		.modified = true,
++		.channel2 = IIO_MOD_Z,
++		.scan_index = 2,
++		.scan_type = {
++			.sign = 's',
++			.realbits = 32,
++			.storagebits = 32,
++			.endianness = IIO_LE,
++		},
++		.info_mask_shared_by_type = BIT(IIO_CHAN_INFO_SCALE) |
++					    BIT(IIO_CHAN_INFO_SAMP_FREQ),
++		.ext_info = qcom_smgr_iio_ext_info
++	},
++	{
++		.type = IIO_TIMESTAMP,
++		.channel = -1,
++		.scan_index = 3,
++		.scan_type = {
++			.sign = 'u',
++			.realbits = 32,
++			.storagebits = 64,
++			.endianness = IIO_LE,
++		},
++	},
++};
++
++static int qcom_smgr_mag_probe(struct platform_device *pdev)
++{
++	struct iio_dev *iio_dev;
++	struct qcom_smgr_iio_priv *priv;
++	int ret;
++
++	iio_dev = devm_iio_device_alloc(&pdev->dev, sizeof(*priv));
++	if (!iio_dev)
++		return -ENOMEM;
++
++	priv = iio_priv(iio_dev);
++	priv->sensor = *(struct qcom_smgr_sensor **)pdev->dev.platform_data;
++	priv->sensor->iio_dev = iio_dev;
++
++	iio_dev->name = "qcom-smgr-mag";
++	iio_dev->info = &qcom_smgr_iio_info;
++	iio_dev->channels = qcom_smgr_mag_iio_channels;
++	iio_dev->num_channels = ARRAY_SIZE(qcom_smgr_mag_iio_channels);
++
++	ret = devm_iio_kfifo_buffer_setup(&pdev->dev, iio_dev,
++					  &qcom_smgr_buffer_ops);
++	if (ret) {
++		dev_err(&pdev->dev, "Failed to setup buffer: %pe\n",
++			ERR_PTR(ret));
++		return ret;
++	}
++
++	ret = devm_iio_device_register(&pdev->dev, iio_dev);
++	if (ret) {
++		dev_err(&pdev->dev, "Failed to register IIO device: %pe\n",
++			ERR_PTR(ret));
++		return ret;
++	}
++
++	platform_set_drvdata(pdev, priv->sensor);
++
++	return 0;
++}
++
++static void qcom_smgr_mag_remove(struct platform_device *pdev)
++{
++	struct qcom_smgr_sensor *sensor = platform_get_drvdata(pdev);
++
++	sensor->iio_dev = NULL;
++}
++
++static const struct platform_device_id qcom_smgr_mag_ids[] = {
++	{ .name = "qcom-smgr-mag" },
++	{ /* sentinel */ }
++};
++MODULE_DEVICE_TABLE(platform, qcom_smgr_mag_ids);
++
++static struct platform_driver qcom_smgr_mag_driver = {
++	.probe = qcom_smgr_mag_probe,
++	.remove = qcom_smgr_mag_remove,
++	.driver	= {
++		.name = "qcom_smgr_mag",
++	},
++	.id_table = qcom_smgr_mag_ids,
++};
++module_platform_driver(qcom_smgr_mag_driver);
++
++MODULE_AUTHOR("Yassine Oudjana <y.oudjana@protonmail.com>");
++MODULE_DESCRIPTION("Qualcomm Sensor Manager magnetometer driver");
++MODULE_LICENSE("GPL");
+--- a/drivers/iio/proximity/qcom_smgr_prox.c
++++ b/drivers/iio/proximity/qcom_smgr_prox.c
+@@ -0,0 +1,106 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Qualcomm Sensor Manager proximity sensor driver
++ *
++ * Copyright (c) 2022, Yassine Oudjana <y.oudjana@protonmail.com>
++ */
++
++#include <linux/mod_devicetable.h>
++#include <linux/platform_device.h>
++#include <linux/iio/buffer.h>
++#include <linux/iio/common/qcom_smgr.h>
++#include <linux/iio/iio.h>
++#include <linux/iio/kfifo_buf.h>
++
++static const struct iio_chan_spec qcom_smgr_prox_iio_channels[] = {
++	{
++		.type = IIO_PROXIMITY,
++		.scan_index = 0,
++		.scan_type = {
++			.sign = 'u',
++			.realbits = 32,
++			.storagebits = 32,
++			.endianness = IIO_LE,
++		},
++		.info_mask_separate = BIT(IIO_CHAN_INFO_OFFSET) |
++				      BIT(IIO_CHAN_INFO_SCALE) |
++				      BIT(IIO_CHAN_INFO_SAMP_FREQ)
++	},
++	{
++		.type = IIO_TIMESTAMP,
++		.channel = -1,
++		.scan_index = 3,
++		.scan_type = {
++			.sign = 'u',
++			.realbits = 32,
++			.storagebits = 64,
++			.endianness = IIO_LE,
++		},
++	},
++};
++
++static int qcom_smgr_prox_probe(struct platform_device *pdev)
++{
++	struct iio_dev *iio_dev;
++	struct qcom_smgr_iio_priv *priv;
++	int ret;
++
++	iio_dev = devm_iio_device_alloc(&pdev->dev, sizeof(*priv));
++	if (!iio_dev)
++		return -ENOMEM;
++
++	priv = iio_priv(iio_dev);
++	priv->sensor = *(struct qcom_smgr_sensor **)pdev->dev.platform_data;
++	priv->sensor->iio_dev = iio_dev;
++
++	iio_dev->name = "qcom-smgr-prox";
++	iio_dev->info = &qcom_smgr_iio_info;
++	iio_dev->channels = qcom_smgr_prox_iio_channels;
++	iio_dev->num_channels = ARRAY_SIZE(qcom_smgr_prox_iio_channels);
++
++	ret = devm_iio_kfifo_buffer_setup(&pdev->dev, iio_dev,
++					  &qcom_smgr_buffer_ops);
++	if (ret) {
++		dev_err(&pdev->dev, "Failed to setup buffer: %pe\n",
++			ERR_PTR(ret));
++		return ret;
++	}
++
++	ret = devm_iio_device_register(&pdev->dev, iio_dev);
++	if (ret) {
++		dev_err(&pdev->dev, "Failed to register IIO device: %pe\n",
++			ERR_PTR(ret));
++		return ret;
++	}
++
++	platform_set_drvdata(pdev, priv->sensor);
++
++	return 0;
++}
++
++static void qcom_smgr_prox_remove(struct platform_device *pdev)
++{
++	struct qcom_smgr_sensor *sensor = platform_get_drvdata(pdev);
++
++	sensor->iio_dev = NULL;
++}
++
++static const struct platform_device_id qcom_smgr_prox_ids[] = {
++	{ .name = "qcom-smgr-prox-light" },
++	{ /* sentinel */ }
++};
++MODULE_DEVICE_TABLE(platform, qcom_smgr_prox_ids);
++
++static struct platform_driver qcom_smgr_prox_driver = {
++	.probe = qcom_smgr_prox_probe,
++	.remove = qcom_smgr_prox_remove,
++	.driver	= {
++		.name = "qcom_smgr_prox",
++	},
++	.id_table = qcom_smgr_prox_ids,
++};
++module_platform_driver(qcom_smgr_prox_driver);
++
++MODULE_AUTHOR("Yassine Oudjana <y.oudjana@protonmail.com>");
++MODULE_DESCRIPTION("Qualcomm Sensor Manager proximity sensor driver");
++MODULE_LICENSE("GPL");
+--- a/include/linux/iio/common/qcom_smgr.h
++++ b/include/linux/iio/common/qcom_smgr.h
+@@ -0,0 +1,64 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++
++#ifndef __QCOM_SMGR_H__
++#define __QCOM_SMGR_H__
++
++#include <linux/iio/iio.h>
++#include <linux/iio/types.h>
++#include <linux/types.h>
++
++enum qcom_smgr_sensor_type {
++	SNS_SMGR_SENSOR_TYPE_UNKNOWN,
++	SNS_SMGR_SENSOR_TYPE_ACCEL,
++	SNS_SMGR_SENSOR_TYPE_GYRO,
++	SNS_SMGR_SENSOR_TYPE_MAG,
++	SNS_SMGR_SENSOR_TYPE_PROX_LIGHT,
++	SNS_SMGR_SENSOR_TYPE_PRESSURE,
++	SNS_SMGR_SENSOR_TYPE_HALL_EFFECT,
++
++	SNS_SMGR_SENSOR_TYPE_COUNT
++};
++
++enum qcom_smgr_data_type {
++	SNS_SMGR_DATA_TYPE_PRIMARY,
++	SNS_SMGR_DATA_TYPE_SECONDARY,
++
++	SNS_SMGR_DATA_TYPE_COUNT
++};
++
++struct qcom_smgr_data_type_item {
++	const char *name;
++	const char *vendor;
++
++	u32 range;
++
++	size_t native_sample_rate_count;
++	u16 *native_sample_rates;
++
++	u16 max_sample_rate;
++	u16 cur_sample_rate;
++};
++
++struct qcom_smgr_sensor {
++	u8 id;
++	enum qcom_smgr_sensor_type type;
++
++	u8 data_type_count;
++	/*
++	 * Only SNS_SMGR_DATA_TYPE_PRIMARY is used at the moment, but we store
++	 * SNS_SMGR_DATA_TYPE_SECONDARY when available as well for future use.
++	 */
++	struct qcom_smgr_data_type_item *data_types;
++
++	struct iio_dev *iio_dev;
++};
++
++struct qcom_smgr_iio_priv {
++	struct qcom_smgr_sensor *sensor;
++};
++
++extern const struct iio_buffer_setup_ops qcom_smgr_buffer_ops;
++extern const struct iio_info qcom_smgr_iio_info;
++extern const struct iio_chan_spec_ext_info qcom_smgr_iio_ext_info[];
++
++#endif /* __QCOM_SMGR_H__ */
+--- a/drivers/iio/common/qcom_smgr/qcom_smgr.c
++++ b/drivers/iio/common/qcom_smgr/qcom_smgr.c
+@@ -0,0 +1,607 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Qualcomm Sensor Manager core driver
++ *
++ * Copyright (c) 2021, Yassine Oudjana <y.oudjana@protonmail.com>
++ */
++
++#include <linux/iio/buffer.h>
++#include <linux/iio/common/qcom_smgr.h>
++#include <linux/iio/iio.h>
++#include <linux/math64.h>
++#include <linux/module.h>
++#include <linux/of.h>
++#include <linux/platform_device.h>
++#include <linux/remoteproc/qcom_rproc.h>
++#include <linux/soc/qcom/qmi.h>
++#include <linux/soc/qcom/qrtr.h>
++#include <linux/types.h>
++#include <net/sock.h>
++
++#include "qmi/sns_smgr.h"
++
++#define SMGR_TICKS_PER_SECOND		32768
++#define SMGR_REPORT_RATE_HZ		(SMGR_TICKS_PER_SECOND * 2)
++#define SMGR_VALUE_DIV			65536
++
++struct qcom_smgr {
++	struct device *dev;
++
++	struct qmi_handle sns_smgr_hdl;
++	struct sockaddr_qrtr sns_smgr_info;
++	struct work_struct sns_smgr_work;
++
++	u8 sensor_count;
++	struct qcom_smgr_sensor *sensors;
++};
++
++static const char *const qcom_smgr_sensor_type_platform_names[] = {
++	[SNS_SMGR_SENSOR_TYPE_ACCEL] = "qcom-smgr-accel",
++	[SNS_SMGR_SENSOR_TYPE_GYRO] = "qcom-smgr-gyro",
++	[SNS_SMGR_SENSOR_TYPE_MAG] = "qcom-smgr-mag",
++	[SNS_SMGR_SENSOR_TYPE_PROX_LIGHT] = "qcom-smgr-prox-light",
++	[SNS_SMGR_SENSOR_TYPE_PRESSURE] = "qcom-smgr-pressure",
++	[SNS_SMGR_SENSOR_TYPE_HALL_EFFECT] = "qcom-smgr-hall-effect"
++};
++
++static void qcom_smgr_unregister_sensor(void *data)
++{
++	struct platform_device *pdev = data;
++
++	platform_device_unregister(pdev);
++}
++
++static int qcom_smgr_register_sensor(struct qcom_smgr *smgr,
++				     struct qcom_smgr_sensor *sensor)
++{
++	struct platform_device *pdev;
++	const char *name;
++
++	if (sensor->type == SNS_SMGR_SENSOR_TYPE_UNKNOWN)
++		return -ENODEV;
++
++	name = qcom_smgr_sensor_type_platform_names[sensor->type];
++
++	pdev = platform_device_register_data(smgr->dev, name, sensor->id,
++					     &sensor, sizeof(sensor));
++	if (IS_ERR(pdev)) {
++		dev_err(smgr->dev, "Failed to register %s: %pe\n", name, pdev);
++		return PTR_ERR(pdev);
++	}
++
++	return devm_add_action_or_reset(smgr->dev, qcom_smgr_unregister_sensor,
++					pdev);
++}
++
++static int qcom_smgr_request_all_sensor_info(struct qcom_smgr *smgr,
++					     struct qcom_smgr_sensor **sensors)
++{
++	struct sns_smgr_all_sensor_info_resp resp = {};
++	struct qmi_txn txn;
++	u8 i;
++	int ret;
++
++	dev_dbg(smgr->dev, "Getting available sensors\n");
++
++	ret = qmi_txn_init(&smgr->sns_smgr_hdl, &txn,
++			   sns_smgr_all_sensor_info_resp_ei, &resp);
++	if (ret < 0) {
++		dev_err(smgr->dev, "Failed to initialize QMI TXN: %d\n", ret);
++		return ret;
++	}
++
++	ret = qmi_send_request(&smgr->sns_smgr_hdl, &smgr->sns_smgr_info, &txn,
++			       SNS_SMGR_ALL_SENSOR_INFO_MSG_ID,
++			       SNS_SMGR_ALL_SENSOR_INFO_REQ_MAX_LEN, NULL,
++			       NULL);
++	if (ret) {
++		dev_err(smgr->dev,
++			"Failed to send available sensors request: %d\n", ret);
++		qmi_txn_cancel(&txn);
++		return ret;
++	}
++
++	ret = qmi_txn_wait(&txn, 5 * HZ);
++	if (ret < 0)
++		return ret;
++
++	/* Check the response */
++	if (resp.result) {
++		dev_err(smgr->dev, "Available sensors request failed: 0x%x\n",
++			resp.result);
++		return -EREMOTEIO;
++	}
++
++	*sensors = devm_kzalloc(smgr->dev,
++				sizeof(struct qcom_smgr_sensor) * resp.item_len,
++				GFP_KERNEL);
++
++	for (i = 0; i < resp.item_len; ++i) {
++		(*sensors)[i].id = resp.items[i].id;
++		(*sensors)[i].type =
++			sns_smgr_sensor_type_from_str(resp.items[i].type);
++	}
++
++	return resp.item_len;
++}
++
++static int qcom_smgr_request_single_sensor_info(struct qcom_smgr *smgr,
++						struct qcom_smgr_sensor *sensor)
++{
++	struct sns_smgr_single_sensor_info_req req = {
++		.sensor_id = sensor->id,
++	};
++	struct sns_smgr_single_sensor_info_resp resp = {};
++	struct qmi_txn txn;
++	u8 i;
++	int ret;
++
++	dev_vdbg(smgr->dev, "Getting single sensor info for ID 0x%02x\n",
++		 sensor->id);
++
++	ret = qmi_txn_init(&smgr->sns_smgr_hdl, &txn,
++			   sns_smgr_single_sensor_info_resp_ei, &resp);
++	if (ret < 0) {
++		dev_err(smgr->dev, "Failed to initialize QMI transaction: %d\n",
++			ret);
++		return ret;
++	}
++
++	ret = qmi_send_request(&smgr->sns_smgr_hdl, &smgr->sns_smgr_info, &txn,
++			       SNS_SMGR_SINGLE_SENSOR_INFO_MSG_ID,
++			       SNS_SMGR_SINGLE_SENSOR_INFO_REQ_MAX_LEN,
++			       sns_smgr_single_sensor_info_req_ei, &req);
++	if (ret < 0) {
++		dev_err(smgr->dev, "Failed to send sensor data request: %d\n",
++			ret);
++		qmi_txn_cancel(&txn);
++		return ret;
++	}
++
++	ret = qmi_txn_wait(&txn, 5 * HZ);
++	if (ret < 0)
++		return ret;
++
++	/* Check the response */
++	if (resp.result) {
++		dev_err(smgr->dev, "Single sensor info request failed: 0x%x\n",
++			resp.result);
++		return -EREMOTEIO;
++	}
++
++	sensor->data_type_count = resp.data_type_len;
++	sensor->data_types =
++		devm_kzalloc(smgr->dev,
++			     sizeof(struct qcom_smgr_data_type_item) *
++				     sensor->data_type_count,
++			     GFP_KERNEL);
++	if (!sensor->data_types)
++		return -ENOMEM;
++
++	for (i = 0; i < sensor->data_type_count; ++i) {
++		sensor->data_types[i].name = devm_kstrdup_const(
++			smgr->dev, resp.data_types[i].name, GFP_KERNEL);
++		sensor->data_types[i].vendor = devm_kstrdup_const(
++			smgr->dev, resp.data_types[i].vendor, GFP_KERNEL);
++
++		sensor->data_types[i].range = resp.data_types[i].range;
++
++		sensor->data_types[i].native_sample_rate_count =
++			resp.native_sample_rates[i].rate_count;
++		if (sensor->data_types[i].native_sample_rate_count) {
++			sensor->data_types[i]
++				.native_sample_rates = devm_kmemdup_array(
++				smgr->dev, resp.native_sample_rates[i].rates,
++				sensor->data_types[i].native_sample_rate_count,
++				sizeof(u16), GFP_KERNEL);
++			if (!sensor->data_types[i].native_sample_rates)
++				return -ENOMEM;
++		}
++
++		sensor->data_types[i].max_sample_rate =
++			resp.data_types[i].max_sample_rate_hz;
++	}
++
++	return 0;
++}
++
++static int qcom_smgr_request_buffering(struct qcom_smgr *smgr,
++				       struct qcom_smgr_sensor *sensor,
++				       bool enable)
++{
++	struct sns_smgr_buffering_req req = {
++		/*
++		 * Reuse sensor ID as a report ID to avoid having to keep track
++		 * of a separate set of IDs
++		 */
++		.report_id = sensor->id,
++		.notify_suspend_valid = false
++	};
++	struct sns_smgr_buffering_resp resp = {};
++	struct qmi_txn txn;
++	u16 sample_rate = 0;
++	int ret;
++
++	if (enable) {
++		req.action = SNS_SMGR_BUFFERING_ACTION_ADD;
++
++		/*
++		 * Report rate and sample rate can be configured separately.
++		 * The former is the rate at which buffering report indications
++		 * are sent, while the latter is the actual sample rate of the
++		 * sensor. If report rate is set lower than sample rate,
++		 * multiple samples can be bundled and sent in one report.
++		 * A report cannot have 0 samples, therefore report rate cannot
++		 * be higher than sample rate.
++		 *
++		 * Fow now we default to the maximum sample rate and set the
++		 * report rate such that every report contains only 1 sample.
++		 * This gives us the lowest latency.
++		 */
++		if (sensor->data_types[0].native_sample_rates)
++			sample_rate = sensor->data_types[0].native_sample_rates
++					[sensor->data_types[0]
++						 .native_sample_rate_count - 1];
++
++		/*
++		 * SMGR may support a lower maximum sample rate than natively
++		 * supported by the sensor.
++		 */
++		if (sample_rate == 0 ||
++		    sample_rate > sensor->data_types[0].max_sample_rate)
++			sample_rate = sensor->data_types[0].max_sample_rate;
++
++		req.report_rate = sample_rate * SMGR_REPORT_RATE_HZ;
++
++		req.item_len = 1;
++		req.items[0].sensor_id = sensor->id;
++		req.items[0].data_type = SNS_SMGR_DATA_TYPE_PRIMARY;
++
++		req.items[0].sampling_rate = sample_rate;
++
++		/*
++		 * Unknown fields set to values frequently seen in dumps and
++		 * known to be working (although many different random values
++		 * appear to not cause any trouble).
++		 */
++		req.items[0].val1 = 3;
++		req.items[0].val2 = 1;
++	} else
++		req.action = SNS_SMGR_BUFFERING_ACTION_DELETE;
++
++	ret = qmi_txn_init(&smgr->sns_smgr_hdl, &txn,
++			   sns_smgr_buffering_resp_ei, &resp);
++	if (ret < 0) {
++		dev_err(smgr->dev, "Failed to initialize QMI TXN: %d\n", ret);
++		return ret;
++	}
++
++	ret = qmi_send_request(&smgr->sns_smgr_hdl, &smgr->sns_smgr_info, &txn,
++			       SNS_SMGR_BUFFERING_MSG_ID,
++			       SNS_SMGR_BUFFERING_REQ_MAX_LEN,
++			       sns_smgr_buffering_req_ei, &req);
++	if (ret < 0) {
++		dev_err(smgr->dev, "Failed to send buffering request: %d\n",
++			ret);
++		qmi_txn_cancel(&txn);
++		return ret;
++	}
++
++	ret = qmi_txn_wait(&txn, 5 * HZ);
++	if (ret < 0)
++		return ret;
++
++	/* Check the response */
++	if (resp.result) {
++		dev_err(smgr->dev, "Buffering request failed: 0x%x\n",
++			resp.result);
++		return -EREMOTEIO;
++	}
++
++	/* Keep track of requested sample rate */
++	sensor->data_types[0].cur_sample_rate = sample_rate;
++
++	return 0;
++}
++
++static void qcom_smgr_buffering_report_handler(struct qmi_handle *hdl,
++					       struct sockaddr_qrtr *sq,
++					       struct qmi_txn *txn,
++					       const void *data)
++{
++	struct qcom_smgr *smgr =
++		container_of(hdl, struct qcom_smgr, sns_smgr_hdl);
++	struct sns_smgr_buffering_report_ind *ind =
++		(struct sns_smgr_buffering_report_ind *)data;
++	struct qcom_smgr_sensor *sensor;
++	u8 i;
++
++	for (i = 0; i < smgr->sensor_count; ++i) {
++		sensor = &smgr->sensors[i];
++
++		/* Find sensor matching report */
++		if (sensor->id != ind->report_id)
++			continue;
++
++		if (!sensor->iio_dev)
++			/* Corresponding driver was unloaded. Ignore remaining reports. */
++			return;
++
++		/*
++		 * Since we are matching report rate with sample rate, we only
++		 * get a single sample in every report.
++		 */
++		iio_push_to_buffers_with_timestamp(sensor->iio_dev,
++						   ind->samples[0].values,
++						   ind->metadata.timestamp);
++
++		break;
++	}
++}
++
++static const struct qmi_msg_handler qcom_smgr_msg_handlers[] = {
++	{
++		.type = QMI_INDICATION,
++		.msg_id = SNS_SMGR_BUFFERING_REPORT_MSG_ID,
++		.ei = sns_smgr_buffering_report_ind_ei,
++		.decoded_size = sizeof(struct sns_smgr_buffering_report_ind),
++		.fn = qcom_smgr_buffering_report_handler,
++	},
++	{}
++};
++
++static int qcom_smgr_sensor_postenable(struct iio_dev *iio_dev)
++{
++	struct qcom_smgr *smgr = dev_get_drvdata(iio_dev->dev.parent->parent);
++	struct qcom_smgr_iio_priv *priv = iio_priv(iio_dev);
++	struct qcom_smgr_sensor *sensor = priv->sensor;
++
++	return qcom_smgr_request_buffering(smgr, sensor, true);
++}
++
++static int qcom_smgr_sensor_postdisable(struct iio_dev *iio_dev)
++{
++	struct qcom_smgr *smgr = dev_get_drvdata(iio_dev->dev.parent->parent);
++	struct qcom_smgr_iio_priv *priv = iio_priv(iio_dev);
++	struct qcom_smgr_sensor *sensor = priv->sensor;
++
++	return qcom_smgr_request_buffering(smgr, sensor, false);
++}
++
++const struct iio_buffer_setup_ops qcom_smgr_buffer_ops = {
++	.postenable = &qcom_smgr_sensor_postenable,
++	.postdisable = &qcom_smgr_sensor_postdisable
++};
++EXPORT_SYMBOL_GPL(qcom_smgr_buffer_ops);
++
++static int qcom_smgr_iio_read_raw(struct iio_dev *iio_dev,
++				  struct iio_chan_spec const *chan, int *val,
++				  int *val2, long mask)
++{
++	struct qcom_smgr_iio_priv *priv = iio_priv(iio_dev);
++
++	switch (mask) {
++	case IIO_CHAN_INFO_SAMP_FREQ:
++		*val = priv->sensor->data_types[0].cur_sample_rate;
++		return IIO_VAL_INT;
++	case IIO_CHAN_INFO_SCALE:
++		switch (chan->type) {
++		case IIO_PROXIMITY:
++			/*
++			 * Proximity value is reported as (SMGR_VALUE_DIV - x)/SMGR_VALUE_DIV of
++			 * the sensor range. As with sensor values, range is also reported as range
++			 * in meters * SMGR_VALUE_DIV. Proximity in meters can be calculated as
++			 * such:
++			 *
++			 * proximity = -value * range / SMGR_VALUE_DIV**2
++			 *
++			 * Since our denominator (val2) is an int, we cannot fit SMGR_VALUE_DIV**2.
++			 * Without losing too much accuracy, we can instead divide by 2 in the
++			 * numerator and denominator, and move the -1 coefficient to the
++			 * denominator. This way we can exactly fit within the lower bound of int.
++			 */
++			*val = priv->sensor->data_types[0].range / 2;
++			*val2 = -SMGR_VALUE_DIV / 2 * SMGR_VALUE_DIV;
++			return IIO_VAL_FRACTIONAL;
++		default:
++			/*
++			 * Sensor values are generally reported as 1/SMGR_VALUE_DIVths of the
++			 * corresponding unit.
++			 */
++			*val = 1;
++			*val2 = SMGR_VALUE_DIV;
++			return IIO_VAL_FRACTIONAL;
++		}
++	case IIO_CHAN_INFO_OFFSET:
++		/*
++		 * Proximity values are inverted and start from the upper bound as explained above.
++		 * No other channel types have an offset.
++		 */
++		*val = priv->sensor->data_types[0].range;
++		*val2 = SMGR_VALUE_DIV;
++		return IIO_VAL_FRACTIONAL;
++	}
++
++	return -EINVAL;
++}
++
++static int qcom_smgr_iio_write_raw(struct iio_dev *iio_dev,
++				   struct iio_chan_spec const *chan, int val,
++				   int val2, long mask)
++{
++	struct qcom_smgr_iio_priv *priv = iio_priv(iio_dev);
++
++	switch (mask) {
++	case IIO_CHAN_INFO_SAMP_FREQ:
++		priv->sensor->data_types[0].cur_sample_rate = val;
++
++		/*
++		 * Send new SMGR buffering request with updated rates
++		 * if buffer is enabled
++		 */
++		if (iio_buffer_enabled(iio_dev))
++			return iio_dev->setup_ops->postenable(iio_dev);
++
++		return 0;
++	}
++
++	return -EINVAL;
++}
++
++static int qcom_smgr_iio_read_avail(struct iio_dev *iio_dev,
++				    struct iio_chan_spec const *chan,
++				    const int **vals, int *type, int *length,
++				    long mask)
++{
++	struct qcom_smgr_iio_priv *priv = iio_priv(iio_dev);
++	const int samp_freq_vals[3] = {
++		1, 1, priv->sensor->data_types[0].cur_sample_rate
++	};
++
++	switch (mask) {
++	case IIO_CHAN_INFO_SAMP_FREQ:
++		*type = IIO_VAL_INT;
++		*vals = samp_freq_vals;
++		*length = ARRAY_SIZE(samp_freq_vals);
++		return IIO_AVAIL_RANGE;
++	}
++
++	return -EINVAL;
++}
++
++const struct iio_info qcom_smgr_iio_info = {
++	.read_raw = qcom_smgr_iio_read_raw,
++	.write_raw = qcom_smgr_iio_write_raw,
++	.read_avail = qcom_smgr_iio_read_avail,
++};
++EXPORT_SYMBOL_GPL(qcom_smgr_iio_info);
++
++/* SMGR reports values for 3-axis sensors in north-east-down coordinates */
++static const struct iio_mount_matrix qcom_smgr_iio_mount_matrix = {
++	.rotation = {
++		"0", "-1", "0",
++		"-1", "0", "0",
++		"0", "0", "1"
++	}
++};
++
++static const struct iio_mount_matrix *
++qcom_smgr_iio_get_mount_matrix(const struct iio_dev *iio_dev,
++			       const struct iio_chan_spec *chan)
++{
++	return &qcom_smgr_iio_mount_matrix;
++}
++
++const struct iio_chan_spec_ext_info qcom_smgr_iio_ext_info[] = {
++	IIO_MOUNT_MATRIX(IIO_SHARED_BY_DIR, qcom_smgr_iio_get_mount_matrix),
++	{}
++};
++EXPORT_SYMBOL_GPL(qcom_smgr_iio_ext_info);
++
++static int qcom_smgr_probe(struct qrtr_device *qdev)
++{
++	struct qcom_smgr *smgr;
++	int i, j, try;
++	int ret;
++
++	smgr = devm_kzalloc(&qdev->dev, sizeof(*smgr), GFP_KERNEL);
++	if (!smgr)
++		return -ENOMEM;
++
++	smgr->dev = &qdev->dev;
++
++	smgr->sns_smgr_info.sq_family = AF_QIPCRTR;
++	smgr->sns_smgr_info.sq_node = qdev->node;
++	smgr->sns_smgr_info.sq_port = qdev->port;
++
++	dev_set_drvdata(&qdev->dev, smgr);
++
++	ret = qmi_handle_init(&smgr->sns_smgr_hdl,
++			      SNS_SMGR_SINGLE_SENSOR_INFO_RESP_MAX_LEN, NULL,
++			      qcom_smgr_msg_handlers);
++	if (ret < 0) {
++		dev_err(smgr->dev,
++			"Failed to initialize sensor manager handle: %d\n",
++			ret);
++		return ret;
++	}
++
++	/*
++	 * The SSC answers only after it has finished its own start-up (it
++	 * reads the registry first), which takes longer than one request
++	 * timeout: keep asking for up to two minutes.
++	 */
++	for (try = 0; try < 24; try++) {
++		ret = qcom_smgr_request_all_sensor_info(smgr, &smgr->sensors);
++		if (ret != -ETIMEDOUT)
++			break;
++		dev_info(smgr->dev, "sensor manager not ready yet, waiting\n");
++	}
++	if (ret < 0) {
++		dev_err(smgr->dev, "Failed to get available sensors: %pe\n",
++			ERR_PTR(ret));
++		/* the handle lives in devm memory: it must not outlive a failed probe */
++		qmi_handle_release(&smgr->sns_smgr_hdl);
++		return ret;
++	}
++	smgr->sensor_count = ret;
++
++	/* Get primary and secondary sensors from each sensor ID */
++	for (i = 0; i < smgr->sensor_count; i++) {
++		ret = qcom_smgr_request_single_sensor_info(smgr,
++							   &smgr->sensors[i]);
++		if (ret < 0) {
++			dev_err(smgr->dev,
++				"Failed to get sensors from ID 0x%02x: %pe\n",
++				smgr->sensors[i].id, ERR_PTR(ret));
++			qmi_handle_release(&smgr->sns_smgr_hdl);
++			return ret;
++		}
++
++		for (j = 0; j < smgr->sensors[i].data_type_count; j++) {
++			/* Default to maximum sample rate */
++			smgr->sensors[i].data_types->cur_sample_rate =
++				smgr->sensors[i].data_types->max_sample_rate;
++
++			dev_info(smgr->dev, "0x%02x,%d: %s %s\n",
++				smgr->sensors[i].id, j,
++				smgr->sensors[i].data_types[j].vendor,
++				smgr->sensors[i].data_types[j].name);
++		}
++
++		qcom_smgr_register_sensor(smgr, &smgr->sensors[i]);
++	}
++
++	return 0;
++}
++
++static void qcom_smgr_remove(struct qrtr_device *qdev)
++{
++	struct qcom_smgr *smgr = dev_get_drvdata(&qdev->dev);
++
++	qmi_handle_release(&smgr->sns_smgr_hdl);
++}
++
++static const struct qrtr_device_id qcom_smgr_qrtr_match[] = {
++	{
++		.service = SNS_SMGR_QMI_SVC_ID,
++		.instance = QRTR_INSTANCE(SNS_SMGR_QMI_SVC_V1,
++					  SNS_SMGR_QMI_INS_ID)
++	},
++	{},
++};
++MODULE_DEVICE_TABLE(qrtr, qcom_smgr_qrtr_match);
++
++static struct qrtr_driver qcom_smgr_driver = {
++	.probe = qcom_smgr_probe,
++	.remove = qcom_smgr_remove,
++	.id_table = qcom_smgr_qrtr_match,
++	.driver	= {
++		.name = "qcom_smgr",
++	},
++};
++module_qrtr_driver(qcom_smgr_driver);
++
++MODULE_AUTHOR("Yassine Oudjana <y.oudjana@protonmail.com>");
++MODULE_DESCRIPTION("Qualcomm Sensor Manager driver");
++MODULE_LICENSE("GPL");

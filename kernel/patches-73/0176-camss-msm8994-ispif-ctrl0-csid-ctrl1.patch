@@ -1,0 +1,47 @@
+From: Matt <matt@localhost>
+Subject: [PATCH] media: camss: msm8994: ISPIF VFE_m_CTRL_0 line-buf + CSID 3.1 CORE_CTRL_1 0xF
+
+CAF cm-14.1 writes ISPIF_VFE_m_CTRL_0 = PIX0_LINE_BUF_EN (msm_ispif.c:298) at
+reset for every VFE and CSID CORE_CTRL_1 |= 0xF (msm_csid.c:207); mainline writes
+neither. Draft for task 345 (dry-run only, not tested on hardware).
+---
+--- a/drivers/media/platform/qcom/camss/camss-csid-4-1.c
++++ b/drivers/media/platform/qcom/camss/camss-csid-4-1.c
+@@ -99,7 +99,13 @@
+ 			writel_relaxed(val, csid->base + CAMSS_CSID_CORE_CTRL_0);
+ 
+ 			val = phy->csiphy_id << 17;
+-			val |= 0x9;
++			/* msm8994 CSID v3.1: CAF msm_csid.c writes 0xF here,
++			 * not 0x9 (8916/8996 CSID 4.x keep 0x9) */
++			if (of_device_is_compatible(csid->camss->dev->of_node,
++						    "qcom,msm8994-camss"))
++				val |= 0xf;
++			else
++				val |= 0x9;
+ 
+ 			writel_relaxed(val, csid->base + CAMSS_CSID_CORE_CTRL_1);
+ 		}
+--- a/drivers/media/platform/qcom/camss/camss-ispif.c
++++ b/drivers/media/platform/qcom/camss/camss-ispif.c
+@@ -14,6 +14,7 @@
+ #include <linux/iopoll.h>
+ #include <linux/kernel.h>
+ #include <linux/mutex.h>
++#include <linux/of.h>
+ #include <linux/platform_device.h>
+ #include <linux/pm_runtime.h>
+ #include <media/media-entity.h>
+@@ -309,6 +310,12 @@
+ 		return -EIO;
+ 	}
+ 
++	/* msm8994 (ISPIF v3.0): CAF msm_ispif.c:298 sets PIX0_LINE_BUF_EN in
++	 * VFE_m_CTRL_0 for every VFE at reset; mainline never writes CTRL_0 */
++	if (of_device_is_compatible(camss->dev->of_node, "qcom,msm8994-camss"))
++		writel_relaxed(ISPIF_VFE_m_CTRL_0_PIX0_LINE_BUF_EN,
++			       ispif->base + ISPIF_VFE_m_CTRL_0(vfe_id));
++
+ 	return 0;
+ }
+ 

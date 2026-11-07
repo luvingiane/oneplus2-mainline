@@ -1,0 +1,14 @@
+[Unit]
+Description=OnePlus 2 modem: QMI VOICE client registered for call events (without one the network is never alerted)
+After=op2-modem.service
+Requires=op2-modem.service
+Before=ztoscorenetworking.service
+
+[Service]
+Environment=WAIT=2592000
+ExecStart=/usr/local/bin/qmux /dev/wwan0qmi0 9 03 13:01
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

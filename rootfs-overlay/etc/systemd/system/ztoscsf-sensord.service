@@ -1,0 +1,12 @@
+[Unit]
+Description=ztoscsf-sensord: light and motion sensors of the OnePlus 2 (ADSP sensor core, op2-sensord)
+After=op2-adsp.service op2-sns-reg.service
+Wants=op2-adsp.service op2-sns-reg.service
+
+[Service]
+ExecStart=/usr/local/bin/op2-sensord
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=graphical.target

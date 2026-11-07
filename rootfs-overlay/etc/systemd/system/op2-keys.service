@@ -1,0 +1,10 @@
+[Unit]
+Description=OnePlus 2 alert slider to ztmetro
+
+[Service]
+ExecStart=/usr/bin/python3 /usr/local/bin/op2-keys
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

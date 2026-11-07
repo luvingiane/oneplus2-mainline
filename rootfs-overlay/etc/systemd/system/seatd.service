@@ -1,0 +1,11 @@
+[Unit]
+Description=seatd (seat management for wlroots/ztmetro)
+After=systemd-udevd.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/seatd -g input
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

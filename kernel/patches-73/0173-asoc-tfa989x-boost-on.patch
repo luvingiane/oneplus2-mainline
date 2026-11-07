@@ -1,0 +1,29 @@
+From: Matt <matt@localhost>
+Subject: [PATCH] ASoC: tfa989x: keep the DCDC boost on (DCA=1) in DSP bypass
+
+Measured on the OnePlus 2 (TFA9890): +8.8 dB at 1 kHz with DCA=1.
+
+---
+--- a/sound/soc/codecs/tfa989x.c
++++ b/sound/soc/codecs/tfa989x.c
+@@ -300,11 +300,15 @@
+ 	if (ret)
+ 		return ret;
+ 
+-	/* Set DCDC to follower mode and disable CoolFlux DSP */
+-	return regmap_clear_bits(regmap, TFA989X_SYS_CTRL,
+-				 BIT(TFA989X_SYS_CTRL_DCA) |
+-				 BIT(TFA989X_SYS_CTRL_CFE) |
+-				 BIT(TFA989X_SYS_CTRL_AMPC));
++	/*
++	 * op2: leave the DCDC in adaptive (boost) mode (DCA=1): about 9 dB more
++	 * level on the OnePlus 2 speaker than follower mode. Disable CoolFlux DSP.
++	 */
++	return regmap_update_bits(regmap, TFA989X_SYS_CTRL,
++				  BIT(TFA989X_SYS_CTRL_DCA) |
++				  BIT(TFA989X_SYS_CTRL_CFE) |
++				  BIT(TFA989X_SYS_CTRL_AMPC),
++				  BIT(TFA989X_SYS_CTRL_DCA));
+ }
+ 
+ static void tfa989x_regulator_disable(void *data)

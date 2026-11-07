@@ -1,0 +1,195 @@
+--- a/drivers/firmware/qcom/qcom_scm.c
++++ b/drivers/firmware/qcom/qcom_scm.c
+@@ -2375,5 +2375,39 @@ int qcom_scm_qseecom_op2_call(u32 owner, u32 svc, u32 cmd, const u64 *args, int
+ EXPORT_SYMBOL_GPL(qcom_scm_qseecom_op2_call);
+ 
++/*
++ * QCOM_SCM_SVC_TZ is missing from the mainline service list. TZ_BLSP_MODIFY_OWNERSHIP
++ * (SMC 0x02000403: SIP owner, svc 0x04, cmd 3) cede/riprende una pipe BLSP/QUP al TZ,
++ * come fa lo stock fpc1020_tee.c (set_pipe_ownership: args qup_id, 3=TZ / 1=APSS,
++ * chiamata al probe con to_tz=true; se REE e TEE si contendono la stessa pipe il
++ * sistema crasha). OnePlus 2: sensore FPC su BLSP2 QUP6 (spi-qup-id = <6>).
++ */
++#define QCOM_SCM_SVC_TZ			0x04
++#define QCOM_SCM_TZ_BLSP_MODIFY_OWNERSHIP	0x03
++#define QCOM_SCM_TZBSP_APSS_ID		1
++#define QCOM_SCM_TZBSP_TZ_ID		3
++
++int qcom_scm_set_pipe_ownership(u32 qup_id, bool to_tz)
++{
++	struct qcom_scm_desc desc = {
++		.arginfo = QCOM_SCM_ARGS(2),
++		.args[0] = qup_id,
++		.args[1] = to_tz ? QCOM_SCM_TZBSP_TZ_ID : QCOM_SCM_TZBSP_APSS_ID,
++		.svc = QCOM_SCM_SVC_TZ,
++		.cmd = QCOM_SCM_TZ_BLSP_MODIFY_OWNERSHIP,
++		.owner = ARM_SMCCC_OWNER_SIP,
++	};
++	struct qcom_scm_res res;
++	int ret;
++
++	ret = qcom_scm_call(__scm->dev, &desc, &res);
++	if (ret)
++		return ret;
++	if (res.result[0])
++		return -EINVAL;
++	return 0;
++}
++EXPORT_SYMBOL_GPL(qcom_scm_set_pipe_ownership);
++
+ /*
+  * We do not yet support re-entrant calls via the qseecom interface. To prevent
+  * any potential issues with this, only allow validated machines for now.
+--- a/include/linux/firmware/qcom/qcom_scm.h
++++ b/include/linux/firmware/qcom/qcom_scm.h
+@@ -106,6 +106,7 @@ int qcom_scm_iommu_secure_ptbl_size(u32 spare, size_t *size);
+ int qcom_scm_iommu_secure_ptbl_init(u64 addr, u32 size, u32 spare);
+ int qcom_scm_iommu_set_cp_pool_size(u32 spare, u32 size);
+ int qcom_scm_get_feat_version(u32 feat, u64 *version);
++int qcom_scm_set_pipe_ownership(u32 qup_id, bool to_tz);
+ int qcom_scm_mem_protect_video_var(u32 cp_start, u32 cp_size,
+ 				   u32 cp_nonpixel_start, u32 cp_nonpixel_size);
+ int qcom_scm_assign_mem(phys_addr_t mem_addr, size_t mem_sz, u64 *src,
+--- a/drivers/firmware/qcom/op2-fpc-tz.c
++++ b/drivers/firmware/qcom/op2-fpc-tz.c
+@@ -7,6 +7,8 @@
+  *   lib <mdt_len>   load the common library image (cmnlib: mdt + b00..b03) written to lib.bin
+  *   app <mdt_len>   APP_START (SMC 0x32000101): image written to app.bin -> app id
+  *   send <hex...>   SEND_DATA (SMC 0x30000001): request bytes, response read from `rsp`
++ *   pipe tz|ree     BLSP pipe ownership (SMC 0x02000403): cede/riprende la QUP al TZ
++ *   raw             capture 0x1a + retrieve 0x2b: immagine 80x208 letta da `raw.bin`
+  * SMC command numbers: APP_START 0x01 and LOOKUP 0x03 are confirmed (mainline qcom_scm.c);
+  * REGION 0x05 and LOAD_SERVICES_IMAGE 0x07 are NOT verified (qseecomi.h is missing from the
+  * local CAF snapshot) and can be overridden with the id_region / id_lib module parameters.
+@@ -29,6 +31,11 @@
+ #define OWNER_QSEE_OS	50
+ #define SVC_APP_MGR	1
+ #define MAX_IMG		(1024 * 1024)
++/* sensore FPC2050: immagine 80x208 = 0x4100 byte; la TA la scrive a buffer+0x10 */
++#define FP_IMG_W	80
++#define FP_IMG_H	208
++#define FP_IMG_SIZE	(FP_IMG_W * FP_IMG_H)
++#define FP_IMG_HDR	0x10
+ 
+ static unsigned int id_start = 0x01;
+ module_param(id_start, uint, 0644);
+@@ -49,6 +55,8 @@ static unsigned int types_region;
+ module_param(types_region, uint, 0644);
+ static unsigned int types_lib;
+ module_param(types_lib, uint, 0644);
++static unsigned int qup_id = 6;	/* spi-qup-id del sensore FPC (BLSP2 QUP6) */
++module_param(qup_id, uint, 0644);
+ 
+ struct blob {
+ 	u8 *data;
+@@ -69,7 +77,9 @@ struct op2_fpc {
+ 	u32 app_id;
+ 	char log[512];
+ 	u8 rsp[256];
+ 	size_t rsp_len;
++	u8 *raw;
++	size_t raw_len;
+ };
+ 
+ static void say(struct op2_fpc *f, const char *fmt, ...)
+@@ -255,4 +265,77 @@ static ssize_t ctl_write(struct file *fl, const char __user *u, size_t n, loff
+ 		say(f, "send cmd %02x%02x%02x%02x: ret %d", req_b[0], req_b[1], req_b[2], req_b[3], ret);
++	} else if (!strcmp(tok, "pipe")) {
++		/* pipe tz|ree : cede/riprende la pipe QUP al TZ (SMC 0x02000403) */
++		bool to_tz;
++
++		if (!p || kstrtobool(p, &to_tz))
++			return -EINVAL;
++		ret = qcom_scm_set_pipe_ownership(qup_id, to_tz);
++		say(f, "pipe qup%u -> %s: ret %d", qup_id, to_tz ? "tz" : "ree", ret);
++	} else if (!strcmp(tok, "raw")) {
++		/* dump immagine grezza 80x208 (0x4100 B) senza selftest 0x1f:
++		 * 1) capture_image 0x1a (req plain); 2) debug_retrieve_raw_image 0x2b
++		 * con req[4] = phys buffer immagine (tzmem) e req[8] = size; la TA
++		 * scrive l'immagine a buffer+0x10 (trasporto "modified" della TAC) */
++		void *req, *rsp, *img;
++		phys_addr_t img_phys;
++		u32 img_phys32, img_size = FP_IMG_SIZE;
++		u8 req_b[64] = {};
++
++		if (!f->app_id)
++			return -ENODEV;
++		req = qcom_tzmem_alloc(f->pool, 64, GFP_KERNEL);
++		rsp = qcom_tzmem_alloc(f->pool, 64, GFP_KERNEL);
++		img = qcom_tzmem_alloc(f->pool, FP_IMG_HDR + FP_IMG_SIZE, GFP_KERNEL);
++		if (!req || !rsp || !img) {
++			if (req)
++				qcom_tzmem_free(req);
++			if (rsp)
++				qcom_tzmem_free(rsp);
++			if (img)
++				qcom_tzmem_free(img);
++			return -ENOMEM;
++		}
++		img_phys = qcom_tzmem_to_phys(img);
++		if (img_phys >> 32) {
++			qcom_tzmem_free(req);
++			qcom_tzmem_free(rsp);
++			qcom_tzmem_free(img);
++			return -ERANGE;	/* req[4] porta un indirizzo a 32 bit */
++		}
++		img_phys32 = (u32)img_phys;
++		req_b[0] = 0x1a;
++		memcpy(req, req_b, 64);
++		memset(rsp, 0, 64);
++		ret = qcom_scm_qseecom_app_send(f->app_id, req, 64, rsp, 64);
++		memcpy(f->rsp, rsp, 64);
++		f->rsp_len = 64;
++		say(f, "raw: capture 0x1a ret %d rsp[0] %02x rsp[4] %02x", ret, f->rsp[0], f->rsp[4]);
++		if (!ret) {
++			memset(req_b, 0, sizeof(req_b));
++			req_b[0] = 0x2b;
++			memcpy(req_b + 4, &img_phys32, 4);
++			memcpy(req_b + 8, &img_size, 4);
++			memcpy(req, req_b, 64);
++			memset(rsp, 0, 64);
++			memset(img, 0, FP_IMG_HDR + FP_IMG_SIZE);
++			ret = qcom_scm_qseecom_app_send(f->app_id, req, 64, rsp, 64);
++			memcpy(f->rsp, rsp, 64);
++			f->rsp_len = 64;
++			say(f, "raw: retrieve 0x2b ret %d rsp[0] %02x rsp[4] %02x", ret, f->rsp[0], f->rsp[4]);
++			if (!ret) {
++				if (!f->raw)
++					f->raw = vzalloc(FP_IMG_SIZE);
++				if (!f->raw)
++					ret = -ENOMEM;
++				else {
++					memcpy(f->raw, (u8 *)img + FP_IMG_HDR, FP_IMG_SIZE);
++					f->raw_len = FP_IMG_SIZE;
++				}
++			}
++		}
++		qcom_tzmem_free(req);
++		qcom_tzmem_free(rsp);
++		qcom_tzmem_free(img);
+ 	} else {
+ 		return -EINVAL;
+ 	}
+@@ -283,6 +355,14 @@ static ssize_t rsp_read(struct file *fl, char __user *u, size_t n, loff_t *pos)
+ }
+ static const struct file_operations rsp_fops = { .open = ctl_open, .read = rsp_read };
+ 
++static ssize_t raw_read(struct file *fl, char __user *u, size_t n, loff_t *pos)
++{
++	struct op2_fpc *f = fl->private_data;
++
++	return simple_read_from_buffer(u, n, pos, f->raw, f->raw_len);
++}
++static const struct file_operations raw_fops = { .open = ctl_open, .read = raw_read };
++
+ static int op2_fpc_probe(struct platform_device *pdev)
+ {
+ 	struct qcom_tzmem_pool_config pc = { .initial_size = SZ_64K, .policy = QCOM_TZMEM_POLICY_STATIC };
+@@ -322,6 +399,7 @@ static int op2_fpc_probe(struct platform_device *pdev)
+ 	debugfs_create_file("ctl", 0200, f->dir, f, &ctl_fops);
+ 	debugfs_create_file("log", 0400, f->dir, f, &log_fops);
+ 	debugfs_create_file("rsp", 0400, f->dir, f, &rsp_fops);
++	debugfs_create_file("raw.bin", 0400, f->dir, f, &raw_fops);
+ 	platform_set_drvdata(pdev, f);
+ 	dev_info(f->dev, "ready: debugfs op2-fpc-tz (region %#lx+%#lx, ids start %#x region %#x lib %#x)\n",
+ 		 region_addr, region_size, id_start, id_region, id_lib);

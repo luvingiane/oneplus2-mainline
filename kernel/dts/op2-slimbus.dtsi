@@ -1,0 +1,102 @@
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * OnePlus 2 (DTS_DEFINES=OP2_SLIM): the SLIMbus master (on the ADSP, QRTR service 769) driven through
+ * drivers/slimbus/qcom-ngd-ctrl.c, and the WCD9330 "Tomtom" codec on it (no codec driver yet).
+ * Stock DT: slim@fe12f000 with the tomtom_codec child; values from the Vibe task 328 report
+ * (gemini/vibe-5nov/328-microfoni-wcd9330-vibe.md, reviewed). Needs OP2_ADSP.
+ */
+
+/ {
+	/*
+	 * IPOTESI: the 9.6 MHz codec MCLK comes from PM8994 GPIO 15 (stock qcom,cdc-mclk-gpios,
+	 * qcom,cdc-mclk-clk-rate = <9600000>); a fixed clock stands in until there is a real clock driver.
+	 */
+	op2_codec_mclk: codec-mclk {
+		compatible = "fixed-clock";
+		#clock-cells = <0>;
+		clock-frequency = <9600000>;
+	};
+};
+
+&soc {
+	slimbam: dma-controller@fe104000 {
+		compatible = "qcom,bam-v1.7.0";
+		qcom,controlled-remotely;
+		reg = <0xfe104000 0x20000>;
+		num-channels = <32>;
+		interrupts = <GIC_SPI 164 IRQ_TYPE_LEVEL_HIGH>;
+		#dma-cells = <1>;
+		qcom,ee = <1>;
+		qcom,num-ees = <2>;
+	};
+
+	slim_msm: slim-ngd@fe12f000 {
+		compatible = "qcom,slim-ngd-v1.5.0";
+		reg = <0xfe12f000 0x2c000>;
+		interrupts = <GIC_SPI 163 IRQ_TYPE_LEVEL_HIGH>;
+		/* IPOTESI: BAM pipes 29/30 = bits 29,30 of stock qcom,apps-ch-pipes <0x60000000> (rx lowest) */
+		dmas = <&slimbam 29>, <&slimbam 30>;
+		dma-names = "rx", "tx";
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		slim@1 {
+			reg = <1>;
+			#address-cells = <2>;
+			#size-cells = <0>;
+
+			wcd9330_ifd: codec-ifd@0,0 {
+				compatible = "slim217,130";
+				reg = <0 0>;
+			};
+
+			wcd9330: codec@1,0 {
+				compatible = "slim217,130";
+				reg = <1 0>;
+
+				clock-names = "mclk", "slimbus";
+				clocks = <&op2_codec_mclk>, <&rpmcc RPM_SMD_BB_CLK1>;
+
+				interrupt-parent = <&tlmm>;
+				interrupts = <72 IRQ_TYPE_LEVEL_HIGH>;
+				interrupt-names = "intr1";
+				interrupt-controller;
+				#interrupt-cells = <1>;
+
+				pinctrl-names = "default";
+				pinctrl-0 = <&wcd9330_intr_default &wcd9330_reset_default>;
+
+				reset-gpios = <&tlmm 68 GPIO_ACTIVE_LOW>;
+
+				slim-ifc-dev = <&wcd9330_ifd>;
+
+				#sound-dai-cells = <1>;
+
+				vdd-buck-supply = <&pm8994_s5>;
+				vdd-tx-supply = <&pm8994_s4>;
+				vdd-rx-supply = <&pm8994_s4>;
+				vdd-io-supply = <&pm8994_s4>;
+				vdd-a-1p2v-supply = <&pm8994_l11>;
+				vddcx-supply = <&pm8994_l11>;
+			};
+		};
+	};
+};
+
+&tlmm {
+	wcd9330_intr_default: wcd9330-intr-default-state {
+		pins = "gpio72";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-pull-down;
+		input-enable;
+	};
+
+	wcd9330_reset_default: wcd9330-reset-default-state {
+		pins = "gpio68";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-disable;
+		output-high;
+	};
+};

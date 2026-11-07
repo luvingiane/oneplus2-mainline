@@ -1,0 +1,41 @@
+--- a/drivers/media/platform/qcom/camss/camss.c
++++ b/drivers/media/platform/qcom/camss/camss.c
+@@ -551,7 +551,11 @@
+ 		.clock_rate = { { 0 },
+ 				{ 0 },
+ 				{ 0 },
+-				{ 100000000, 200000000, 266666667 },
++				/* msm8994 CAF stock: csiphy_timer_src_clk rate = csiphy_max_clk
++				 * = 200 MHz (op2-hw14.dtb qcom,clock-rates 0xbebc200); CAF
++				 * msm_csiphy_lane_config runs the timer at max (ratio 1), so do
++				 * the same instead of picking 100 MHz from link_freq/4 */
++				{ 200000000 },
+ 				{ 0 },
+ 				{ 0 } },
+ 		.reg = { "csiphy0", "csiphy0_clk_mux" },
+@@ -576,7 +580,11 @@
+ 		.clock_rate = { { 0 },
+ 				{ 0 },
+ 				{ 0 },
+-				{ 100000000, 200000000, 266666667 },
++				/* msm8994 CAF stock: csiphy_timer_src_clk rate = csiphy_max_clk
++				 * = 200 MHz (op2-hw14.dtb qcom,clock-rates 0xbebc200); CAF
++				 * msm_csiphy_lane_config runs the timer at max (ratio 1), so do
++				 * the same instead of picking 100 MHz from link_freq/4 */
++				{ 200000000 },
+ 				{ 0 },
+ 				{ 0 } },
+ 		.reg = { "csiphy1", "csiphy1_clk_mux" },
+@@ -601,7 +609,11 @@
+ 		.clock_rate = { { 0 },
+ 				{ 0 },
+ 				{ 0 },
+-				{ 100000000, 200000000, 266666667 },
++				/* msm8994 CAF stock: csiphy_timer_src_clk rate = csiphy_max_clk
++				 * = 200 MHz (op2-hw14.dtb qcom,clock-rates 0xbebc200); CAF
++				 * msm_csiphy_lane_config runs the timer at max (ratio 1), so do
++				 * the same instead of picking 100 MHz from link_freq/4 */
++				{ 200000000 },
+ 				{ 0 },
+ 				{ 0 } },
+ 		.reg = { "csiphy2", "csiphy2_clk_mux" },

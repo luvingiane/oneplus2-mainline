@@ -1,0 +1,78 @@
+--- a/drivers/remoteproc/qcom_q6v5_pas.c
++++ b/drivers/remoteproc/qcom_q6v5_pas.c
+@@ -38,6 +38,10 @@
+ 
+ #define MAX_ASSIGN_COUNT 3
+ 
++static bool op2_noauto;
++module_param(op2_noauto, bool, 0444);
++MODULE_PARM_DESC(op2_noauto, "do not start the DSP at probe (start it from sysfs)");
++
+ struct qcom_pas_data {
+ 	int crash_reason_smem;
+ 	const char *firmware_name;
+@@ -73,6 +77,7 @@
+ 	struct qcom_q6v5 q6v5;
+ 
+ 	struct clk *xo;
++	struct clk *ce1_clk;
+ 	struct clk *aggre2_clk;
+ 
+ 	struct regulator *cx_supply;
+@@ -294,9 +299,17 @@
+ 	if (ret)
+ 		goto disable_proxy_pds;
+ 
++	if (pas->ce1_clk) {
++		/* msm8994: TrustZone authenticates the image with the crypto engine clock up */
++		clk_set_rate(pas->ce1_clk, 85710000);
++		ret = clk_prepare_enable(pas->ce1_clk);
++		if (ret)
++			goto disable_xo_clk;
++	}
++
+ 	ret = clk_prepare_enable(pas->aggre2_clk);
+ 	if (ret)
+-		goto disable_xo_clk;
++		goto disable_ce1_clk;
+ 
+ 	if (pas->cx_supply) {
+ 		ret = regulator_enable(pas->cx_supply);
+@@ -375,6 +388,8 @@
+ 		regulator_disable(pas->cx_supply);
+ disable_aggre2_clk:
+ 	clk_disable_unprepare(pas->aggre2_clk);
++disable_ce1_clk:
++	clk_disable_unprepare(pas->ce1_clk);
+ disable_xo_clk:
+ 	clk_disable_unprepare(pas->xo);
+ disable_proxy_pds:
+@@ -397,6 +412,7 @@
+ 	if (pas->cx_supply)
+ 		regulator_disable(pas->cx_supply);
+ 	clk_disable_unprepare(pas->aggre2_clk);
++	clk_disable_unprepare(pas->ce1_clk);
+ 	clk_disable_unprepare(pas->xo);
+ 	qcom_pas_pds_disable(pas, pas->proxy_pds, pas->proxy_pd_count);
+ }
+@@ -622,6 +638,11 @@
+ 		return dev_err_probe(pas->dev, PTR_ERR(pas->xo),
+ 				     "failed to get xo clock");
+ 
++	pas->ce1_clk = devm_clk_get_optional(pas->dev, "scm_ce1_clk");
++	if (IS_ERR(pas->ce1_clk))
++		return dev_err_probe(pas->dev, PTR_ERR(pas->ce1_clk),
++				     "failed to get scm_ce1_clk clock");
++
+ 	pas->aggre2_clk = devm_clk_get_optional(pas->dev, "aggre2");
+ 	if (IS_ERR(pas->aggre2_clk))
+ 		return dev_err_probe(pas->dev, PTR_ERR(pas->aggre2_clk),
+@@ -860,7 +881,7 @@
+ 	}
+ 
+ 	rproc->has_iommu = of_property_present(pdev->dev.of_node, "iommus");
+-	rproc->auto_boot = desc->auto_boot;
++	rproc->auto_boot = desc->auto_boot && !op2_noauto;
+ 	rproc_coredump_set_elf_info(rproc, ELFCLASS32, EM_NONE);
+ 
+ 	pas = rproc->priv;

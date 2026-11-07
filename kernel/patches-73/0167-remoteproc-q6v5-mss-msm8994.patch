@@ -1,0 +1,171 @@
+--- a/drivers/remoteproc/qcom_q6v5_mss.c
++++ b/drivers/remoteproc/qcom_q6v5_mss.c
+@@ -269,6 +269,7 @@
+ 	MSS_MSM8940,
+ 	MSS_MSM8953,
+ 	MSS_MSM8974,
++	MSS_MSM8994,
+ 	MSS_MSM8996,
+ 	MSS_MSM8998,
+ 	MSS_SC7180,
+@@ -676,6 +677,77 @@
+ 	int ret;
+ 	int i;
+ 
++	if (qproc->version == MSS_MSM8994) {
++		/*
++		 * QDSP6v55, as the downstream __pil_q6v55_reset(): the power
++		 * control bits are the v56 ones (BHS BIT(24), LDO bypass
++		 * BIT(25), word line clamp BIT(21), QMC mem clamp BIT(22)),
++		 * not the QDSS_* ones of the v5 branch below, and all memories
++		 * are switched on at once before the L2 banks one by one.
++		 */
++		writel(QDSP6SS_ACC_OVERRIDE_VAL, qproc->reg_base + QDSP6SS_STRAP_ACC);
++
++		val = readl(qproc->reg_base + QDSP6SS_RESET_REG);
++		val |= Q6SS_CORE_ARES | Q6SS_BUS_ARES_ENABLE | Q6SS_STOP_CORE;
++		writel(val, qproc->reg_base + QDSP6SS_RESET_REG);
++
++		/* the head switch needs the xo branch clock */
++		val = readl(qproc->reg_base + QDSP6SS_XO_CBCR);
++		val |= Q6SS_CBCR_CLKEN;
++		writel(val, qproc->reg_base + QDSP6SS_XO_CBCR);
++		ret = readl_poll_timeout(qproc->reg_base + QDSP6SS_XO_CBCR, val,
++					 !(val & Q6SS_CBCR_CLKOFF), 1,
++					 Q6SS_CBCR_TIMEOUT_US);
++		if (ret) {
++			dev_err(qproc->dev, "xo cbcr enabling timed out (rc:%d)\n", ret);
++			return ret;
++		}
++
++		val = readl(qproc->reg_base + QDSP6SS_PWR_CTL_REG);
++		val |= QDSP6v56_BHS_ON;
++		writel(val, qproc->reg_base + QDSP6SS_PWR_CTL_REG);
++		readl(qproc->reg_base + QDSP6SS_PWR_CTL_REG);
++		udelay(1);
++		val |= QDSP6v56_LDO_BYP;
++		writel(val, qproc->reg_base + QDSP6SS_PWR_CTL_REG);
++
++		val = readl(qproc->reg_base + QDSP6SS_PWR_CTL_REG);
++		val |= 0xFFF00;
++		writel(val, qproc->reg_base + QDSP6SS_PWR_CTL_REG);
++		for (i = 0; i <= 7; i++) {
++			val |= BIT(i);
++			writel(val, qproc->reg_base + QDSP6SS_PWR_CTL_REG);
++		}
++
++		val &= ~QDSP6v56_CLAMP_WL;
++		writel(val, qproc->reg_base + QDSP6SS_PWR_CTL_REG);
++		val &= ~Q6SS_CLAMP_IO;
++		writel(val, qproc->reg_base + QDSP6SS_PWR_CTL_REG);
++		val &= ~QDSP6v56_CLAMP_QMC_MEM;
++		writel(val, qproc->reg_base + QDSP6SS_PWR_CTL_REG);
++
++		val = readl(qproc->reg_base + QDSP6SS_RESET_REG);
++		val &= ~(Q6SS_CORE_ARES | Q6SS_STOP_CORE);
++		writel(val, qproc->reg_base + QDSP6SS_RESET_REG);
++
++		val = readl(qproc->reg_base + QDSP6SS_GFMUX_CTL_REG);
++		val |= Q6SS_CLK_ENABLE;
++		writel(val, qproc->reg_base + QDSP6SS_GFMUX_CTL_REG);
++
++		dev_info(qproc->dev, "op2dbg: after reset: RESET=%08x PWR=%08x GFMUX=%08x XOCBCR=%08x ACC=%08x\n",
++			 readl(qproc->reg_base + QDSP6SS_RESET_REG),
++			 readl(qproc->reg_base + QDSP6SS_PWR_CTL_REG),
++			 readl(qproc->reg_base + QDSP6SS_GFMUX_CTL_REG),
++			 readl(qproc->reg_base + QDSP6SS_XO_CBCR),
++			 readl(qproc->reg_base + QDSP6SS_STRAP_ACC));
++		dev_info(qproc->dev, "op2dbg: RMB: image=%08x pbl=%08x mba=%08x cmd=%08x\n",
++			 readl(qproc->rmb_base + RMB_MBA_IMAGE_REG),
++			 readl(qproc->rmb_base + RMB_PBL_STATUS_REG),
++			 readl(qproc->rmb_base + RMB_MBA_STATUS_REG),
++			 readl(qproc->rmb_base + RMB_MBA_COMMAND_REG));
++		goto pbl_wait;
++	}
++
+ 	if (qproc->version == MSS_SDM845) {
+ 		val = readl(qproc->reg_base + QDSP6SS_SLEEP);
+ 		val |= Q6SS_CBCR_CLKEN;
+@@ -940,6 +1012,10 @@
+ 	ret = q6v5_rmb_pbl_wait(qproc, 1000);
+ 	if (ret == -ETIMEDOUT) {
+ 		dev_err(qproc->dev, "PBL boot timed out\n");
++		dev_info(qproc->dev, "op2dbg: timeout: RMB pbl=%08x mba=%08x cmd=%08x\n",
++			 readl(qproc->rmb_base + RMB_PBL_STATUS_REG),
++			 readl(qproc->rmb_base + RMB_MBA_STATUS_REG),
++			 readl(qproc->rmb_base + RMB_MBA_COMMAND_REG));
+ 	} else if (ret != RMB_PBL_SUCCESS) {
+ 		dev_err(qproc->dev, "PBL returned unexpected status %d\n", ret);
+ 		ret = -EINVAL;
+@@ -2812,6 +2888,53 @@
+ 	.ssctl_id = 0x12,
+ };
+ 
++static const struct rproc_hexagon_res msm8994_mss = {
++	.hexagon_mba_image = "mba.mbn",
++	.proxy_supply = (struct qcom_mss_reg_res[]) {
++		{
++			.supply = "pll",
++			.uV = 1800000,
++			.uA = 100000,
++		},
++		{}
++	},
++	.proxy_clk_names = (char*[]){
++		"xo",
++		NULL
++	},
++	.active_clk_names = (char*[]){
++		"iface",
++		"bus",
++		"mem",
++		"gpll0_mss",
++		NULL
++	},
++	.proxy_pd_names = (char*[]){
++		"cx",
++		"mx",
++		NULL
++	},
++	.active_supply = (struct qcom_mss_reg_res[]) {
++		{
++			.supply = "mss",
++			.uV = 1000000,
++			.uA = 100000,
++		},
++		{}
++	},
++	.need_mem_protection = false,
++	.need_pas_mem_setup = false,
++	.has_alt_reset = false,
++	.has_mba_logs = false,
++	.has_spare_reg = false,
++	.has_qaccept_regs = false,
++	.has_ext_bhs_reg = false,
++	.has_ext_cntl_regs = false,
++	.has_vq6 = false,
++	.version = MSS_MSM8994,
++	.ssctl_id = 0x12,
++};
++
+ static const struct rproc_hexagon_res msm8226_mss = {
+ 	.hexagon_mba_image = "mba.b00",
+ 	.proxy_supply = (struct qcom_mss_reg_res[]) {
+@@ -2912,6 +3035,7 @@
+ 	{ .compatible = "qcom,msm8940-mss-pil", .data = &msm8940_mss },
+ 	{ .compatible = "qcom,msm8953-mss-pil", .data = &msm8953_mss },
+ 	{ .compatible = "qcom,msm8974-mss-pil", .data = &msm8974_mss },
++	{ .compatible = "qcom,msm8994-mss-pil", .data = &msm8994_mss },
+ 	{ .compatible = "qcom,msm8996-mss-pil", .data = &msm8996_mss },
+ 	{ .compatible = "qcom,msm8998-mss-pil", .data = &msm8998_mss },
+ 	{ .compatible = "qcom,sc7180-mss-pil", .data = &sc7180_mss },
+--- a/drivers/clk/qcom/clk-smd-rpm.c
++++ b/drivers/clk/qcom/clk-smd-rpm.c
+@@ -900,6 +900,7 @@
+ 	[RPM_SMD_MMSSNOC_AHB_A_CLK] = &clk_smd_rpm_bus_3_mmssnoc_ahb_a_clk,
+ 	[RPM_SMD_MSS_CFG_AHB_CLK] = &clk_smd_rpm_branch_mss_cfg_ahb_clk,
+ 	[RPM_SMD_MSS_CFG_AHB_A_CLK] = &clk_smd_rpm_branch_mss_cfg_ahb_a_clk,
++	[RPM_SMD_PNOC_CLK] = &clk_smd_rpm_bus_0_pcnoc_clk,
+ 	[RPM_SMD_QDSS_CLK] = &clk_smd_rpm_qdss_clk,
+ 	[RPM_SMD_QDSS_A_CLK] = &clk_smd_rpm_qdss_a_clk,
+ 	[RPM_SMD_RF_CLK1] = &clk_smd_rpm_rf_clk1,

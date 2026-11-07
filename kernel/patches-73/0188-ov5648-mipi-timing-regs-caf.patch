@@ -1,0 +1,51 @@
+--- a/drivers/media/i2c/ov5648.c	2026-11-06 10:29:35.718561119 +0100
++++ b/drivers/media/i2c/ov5648.c	2026-11-06 10:29:35.732658147 +0100
+@@ -1124,10 +1124,44 @@
+ 	if (ret)
+ 		return ret;
+ 
+-	return ov5648_write(sensor, OV5648_MIPI_SC_CTRL0_REG,
+-			    OV5648_MIPI_SC_CTRL0_MIPI_LANES(lanes_count) |
+-			    OV5648_MIPI_SC_CTRL0_PHY_LP_RX_PD |
+-			    OV5648_MIPI_SC_CTRL0_MIPI_EN);
++	ret = ov5648_write(sensor, OV5648_MIPI_SC_CTRL0_REG,
++			   OV5648_MIPI_SC_CTRL0_MIPI_LANES(lanes_count) |
++			   OV5648_MIPI_SC_CTRL0_PHY_LP_RX_PD |
++			   OV5648_MIPI_SC_CTRL0_MIPI_EN);
++	if (ret)
++		return ret;
++
++	/* registers every other OV5648 driver (CAF, sunxi, bcm, ingenic, rockchip)
++	 * writes and mainline leaves at power-on defaults */
++	ret = ov5648_write(sensor, OV5648_MIPI_PHY1_REG, 0x05);
++	if (ret)
++		return ret;
++	ret = ov5648_write(sensor, OV5648_MIPI_CTRL1_REG, 0x0f);
++	if (ret)
++		return ret;
++	ret = ov5648_write(sensor, OV5648_MIPI_CTRL2_REG, 0x84);
++	if (ret)
++		return ret;
++	ret = ov5648_write(sensor, OV5648_MIPI_CTRL14_REG, 0x2a);
++	if (ret)
++		return ret;
++	ret = ov5648_write(sensor, OV5648_MIPI_HS_TRAIN_MIN_L_REG, 0x3c);
++	if (ret)
++		return ret;
++	ret = ov5648_write(sensor, OV5648_MIPI_CLK_PREPARE_MIN_L_REG, 0x3c);
++	if (ret)
++		return ret;
++	ret = ov5648_write(sensor, 0x4823, 0x3c);
++	if (ret)
++		return ret;
++	ret = ov5648_write(sensor, 0x4826, 0x00);
++	if (ret)
++		return ret;
++	ret = ov5648_write(sensor, 0x4827, 0x32);
++	if (ret)
++		return ret;
++
++	return ov5648_write(sensor, 0x4837, 0x17);
+ }
+ 
+ static int ov5648_black_level_configure(struct ov5648_sensor *sensor)

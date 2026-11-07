@@ -6,7 +6,7 @@
  * msm8996_resources).
  *
  * csiphy0-2: fda0ac00/b000/b400, csid0-3: fda08000/8400/8800/8c00,
- * ispif: fda0a000, vfe0: fda10000, vfe1: fda14000, clk muxes fda00030/34/38.
+ * ispif: fda0a000, vfe0: fda10000, vfe1: fda14000, clk muxes fda00030/38/40 (csiphy0/1/2, as CAF and the stock dtb).
  */
 
 &soc {
@@ -15,14 +15,14 @@
 		reg = <0xfda0ac00 0x200>,	/* csiphy0 */
 		      <0xfda00030 0x4>,		/* csiphy0_clk_mux */
 		      <0xfda0b000 0x200>,	/* csiphy1 */
-		      <0xfda00034 0x4>,		/* csiphy1_clk_mux */
+		      <0xfda00038 0x4>,		/* csiphy1_clk_mux */
 		      <0xfda0b400 0x200>,	/* csiphy2 */
-		      <0xfda00038 0x4>,		/* csiphy2_clk_mux */
-		      <0xfda08000 0x200>,	/* csid0 */
-		      <0xfda08400 0x200>,	/* csid1 */
-		      <0xfda08800 0x200>,	/* csid2 */
-		      <0xfda08c00 0x200>,	/* csid3 */
-		      <0xfda0a000 0x100>,	/* ispif */
+		      <0xfda00040 0x4>,		/* csiphy2_clk_mux */
+		      <0xfda08000 0x400>,	/* csid0 */
+		      <0xfda08400 0x400>,	/* csid1 */
+		      <0xfda08800 0x400>,	/* csid2 */
+		      <0xfda08c00 0x100>,	/* csid3 */
+		      <0xfda0a000 0x500>,	/* ispif */
 		      <0xfda00020 0x10>,		/* csi_clk_mux */
 		      <0xfda10000 0x1000>,	/* vfe0 */
 		      <0xfda14000 0x1000>;	/* vfe1 */
@@ -46,9 +46,12 @@
 				  "csid0", "csid1", "csid2", "csid3",
 				  "ispif", "vfe0", "vfe1";
 
-		/* legacy magic index: VFE GDSC must come before the TOP one
+		/* legacy magic index: one entry per VFE (msm8994 has a single VFE GDSC,
+		 * listed twice for vfe1) then the TOP one, which camss attaches itself
+		 * only if genpd_num > number of VFEs; VFE GDSC must come before the TOP one
 		 * (camss-vfe.c: dev_pm_domain_attach_by_id(dev, id)) */
 		power-domains = <&mmcc VFE_GDSC>,
+				<&mmcc VFE_GDSC>,
 				<&mmcc CAMSS_TOP_GDSC>;
 
 		/* clock names as the 8x96 resources expect them
@@ -109,7 +112,7 @@
 			      "vfe1", "csi_vfe1", "vfe1_ahb", "vfe1_stream",
 			      "vfe_ahb", "vfe_axi";
 
-		vdda-supply = <&pm8994_l12>;
+		vdda-supply = <&pm8994_l2>;	/* stock: qcom,mipi-csi-vdd-supply = pm8994_l2, 1.25 V */
 		vddda-supply = <&pm8994_l22>;
 
 		ports {

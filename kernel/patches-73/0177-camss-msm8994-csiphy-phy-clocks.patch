@@ -1,0 +1,62 @@
+--- a/drivers/media/platform/qcom/camss/camss.c	2026-11-06 01:09:44.031323155 +0100
++++ b/drivers/media/platform/qcom/camss/camss.c	2026-11-06 01:09:44.047925641 +0100
+@@ -523,11 +523,17 @@
+ 	/* CSIPHY0 */
+ 	{
+ 		.regulators = {},
+-		.clock = { "top_ahb", "ispif_ahb", "ahb", "csiphy0_timer" },
++		.clock = { "top_ahb", "ispif_ahb", "ahb", "csiphy0_timer",
++			"csi0_phy", "csi0_ahb" },
++		/* msm8994: the PHY register block is clocked by its own
++		 * CAMSS_CSIxPHY/AHB clocks, not only by the CSID that is linked to it
++		 * (reading csiphy2 hangs the bus without them) */
+ 		.clock_rate = { { 0 },
+ 				{ 0 },
+ 				{ 0 },
+-				{ 100000000, 200000000, 266666667 } },
++				{ 100000000, 200000000, 266666667 },
++				{ 0 },
++				{ 0 } },
+ 		.reg = { "csiphy0", "csiphy0_clk_mux" },
+ 		.interrupt = { "csiphy0" },
+ 		.csiphy = {
+@@ -540,11 +546,17 @@
+ 	/* CSIPHY1 */
+ 	{
+ 		.regulators = {},
+-		.clock = { "top_ahb", "ispif_ahb", "ahb", "csiphy1_timer" },
++		.clock = { "top_ahb", "ispif_ahb", "ahb", "csiphy1_timer",
++			"csi1_phy", "csi1_ahb" },
++		/* msm8994: the PHY register block is clocked by its own
++		 * CAMSS_CSIxPHY/AHB clocks, not only by the CSID that is linked to it
++		 * (reading csiphy2 hangs the bus without them) */
+ 		.clock_rate = { { 0 },
+ 				{ 0 },
+ 				{ 0 },
+-				{ 100000000, 200000000, 266666667 } },
++				{ 100000000, 200000000, 266666667 },
++				{ 0 },
++				{ 0 } },
+ 		.reg = { "csiphy1", "csiphy1_clk_mux" },
+ 		.interrupt = { "csiphy1" },
+ 		.csiphy = {
+@@ -557,11 +569,17 @@
+ 	/* CSIPHY2 */
+ 	{
+ 		.regulators = {},
+-		.clock = { "top_ahb", "ispif_ahb", "ahb", "csiphy2_timer" },
++		.clock = { "top_ahb", "ispif_ahb", "ahb", "csiphy2_timer",
++			"csi2_phy", "csi2_ahb" },
++		/* msm8994: the PHY register block is clocked by its own
++		 * CAMSS_CSIxPHY/AHB clocks, not only by the CSID that is linked to it
++		 * (reading csiphy2 hangs the bus without them) */
+ 		.clock_rate = { { 0 },
+ 				{ 0 },
+ 				{ 0 },
+-				{ 100000000, 200000000, 266666667 } },
++				{ 100000000, 200000000, 266666667 },
++				{ 0 },
++				{ 0 } },
+ 		.reg = { "csiphy2", "csiphy2_clk_mux" },
+ 		.interrupt = { "csiphy2" },
+ 		.csiphy = {

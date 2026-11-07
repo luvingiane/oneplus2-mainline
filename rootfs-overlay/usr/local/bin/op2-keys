@@ -1,0 +1,75 @@
+#!/usr/bin/python3
+"""OnePlus 2 alert slider ("Alert slider", F15 / F13 held, none held in the middle).
+
+F15 held = ringer on (the level it had), otherwise vibrate (ringer 0). Done with
+ztmetro's "volume N" steps (VOLUME_MAX 30), which also draws its volume bar.
+("Synaptics s3320" is the touchscreen, not the home button: its BTN_TOUCH must not become "home".)"""
+import glob, os, select, struct, time
+
+CONF = "/home/zerone/.config/ztmetro/config"
+VOLUME_MAX = 30
+
+CTL = "/run/user/1000/ztmetro.ctl"
+
+
+def ctl(cmd):
+    print("ctl", cmd, flush=True)
+    try:
+        fd = os.open(CTL, os.O_WRONLY | os.O_NONBLOCK)
+        os.write(fd, (cmd + "\n").encode())
+        os.close(fd)
+    except OSError:
+        pass
+
+
+def ring_steps():
+    try:
+        for line in open(CONF):
+            if line.startswith("ring_volume"):
+                return (int(line.split("=")[1]) * VOLUME_MAX + 99) // 100
+    except (OSError, ValueError):
+        pass
+    return 21
+
+
+saved = ring_steps() or 21
+held = set()
+
+
+def slider():
+    global saved
+    cur = ring_steps()
+    if 185 in held:
+        if cur == 0:
+            ctl("volume %d" % saved)
+    else:
+        if cur:
+            saved = cur
+            ctl("volume -%d" % VOLUME_MAX)
+
+
+def devices():
+    out = {}
+    for p in glob.glob("/sys/class/input/event*/device/name"):
+        n = open(p).read().strip()
+        if n in ("Alert slider",):
+            ev = p.split("/")[4]
+            out[os.open("/dev/input/" + ev, os.O_RDONLY | os.O_NONBLOCK)] = n
+    return out
+
+
+devs = devices()
+while True:
+    r, _, _ = select.select(list(devs), [], [], 5)
+    for fd in r:
+        try:
+            data = os.read(fd, 24 * 32)
+        except OSError:
+            continue
+        for i in range(0, len(data) - 23, 24):
+            _, _, t, c, v = struct.unpack("llHHi", data[i:i + 24])
+            if t != 1:
+                continue
+            if devs[fd] == "Alert slider" and c in (183, 185):
+                (held.add if v else held.discard)(c)
+                slider()

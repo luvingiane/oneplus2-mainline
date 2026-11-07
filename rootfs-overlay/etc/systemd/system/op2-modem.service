@@ -1,0 +1,15 @@
+[Unit]
+Description=OnePlus 2 modem: DPM port (/dev/wwan0qmi0), online, SIM session
+After=op2-rmtfs.service
+Requires=op2-rmtfs.service
+Before=ztoscorenetworking.service
+ConditionPathExists=/lib/firmware/qcom/msm8994/oneplus2/modem.mdt
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/op2-modem-up
+TimeoutStartSec=240
+
+[Install]
+WantedBy=multi-user.target

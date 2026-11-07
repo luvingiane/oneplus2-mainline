@@ -1,0 +1,6 @@
+#!/bin/sh
+# The OnePlus 2's QCA controller has an invalid factory BD address and stays "unconfigured" until it gets one.
+# A stable locally administered address derived from the machine id (02:xx:xx:xx:xx:xx); no address from the phone is read.
+h=$(sha256sum /etc/machine-id | cut -c1-10)
+addr=$(echo "$h" | sed 's/\(..\)\(..\)\(..\)\(..\)\(..\)/02:\1:\2:\3:\4:\5/' | tr a-f A-F)
+exec btmgmt --index 0 public-addr "$addr"

@@ -1,0 +1,249 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Qualcomm 20nm DSI PLL (msm8994), ported from CAF
+ * drivers/clk/qcom/mdss/mdss-dsi-pll-20nm{,-pll-util}.c to a plain
+ * platform driver: at probe it re-locks the PLL to the rate the DT
+ * describes (VCO 883.2 MHz -> 883 Mbps/lane, byte 110.4 MHz), so the
+ * command-mode panel can transfer a full 1080p frame in ~14 ms instead
+ * of ~90 ms (~11 fps -> 60 fps capable). Mainline has no 20nm PLL driver,
+ * which is why patch 0003 kept the bootloader's (slow) PLL.
+ */
+#include <linux/clk-provider.h>
+#include <linux/delay.h>
+#include <linux/err.h>
+#include <linux/io.h>
+#include <linux/module.h>
+#include <linux/of.h>
+#include <linux/of_device.h>
+#include <linux/platform_device.h>
+#include <linux/slab.h>
+
+static bool op2_dsipll;
+module_param_named(dsipll, op2_dsipll, bool, 0644);
+
+/* PLL register offsets (CAF mdss-dsi-pll-util.c) */
+#define PLL_SYS_CLK_CTRL		0x0000
+#define PLL_VCOTAIL_EN			0x0004
+#define PLL_CMN_MODE			0x0008
+#define PLL_IE_TRIM			0x000C
+#define PLL_IP_TRIM			0x0010
+#define PLL_PHSEL_CONTROL		0x0018
+#define PLL_IPTAT_TRIM_VCCA_TX_SEL	0x001C
+#define PLL_BIAS_EN_CLKBUFLR_EN		0x0030
+#define PLL_PLL_CP_SETI			0x0034
+#define PLL_IP_SETI			0x0024
+#define PLL_PLL_IP_SETP			0x0038
+#define PLL_PLL_CP_SETP			0x003C
+#define PLL_SYSCLK_EN_SEL_TXBAND	0x0048
+#define PLL_RESETSM_CNTRL		0x004C
+#define PLL_RESETSM_CNTRL2		0x0050
+#define PLL_RESETSM_CNTRL3		0x0054
+#define PLL_DIV_REF1			0x0060
+#define PLL_DIV_REF2			0x0064
+#define PLL_KVCO_COUNT1			0x0068
+#define PLL_KVCO_CAL_CNTRL		0x0070
+#define PLL_KVCO_CODE			0x0074
+#define PLL_VREF_CFG3			0x0080
+#define PLL_PLLLOCK_CMP1		0x0090
+#define PLL_PLLLOCK_CMP2		0x0094
+#define PLL_PLLLOCK_CMP3		0x0098
+#define PLL_PLLLOCK_CMP_EN		0x009C
+#define PLL_VCO_TUNE			0x00A8
+#define PLL_DEC_START1			0x00AC
+#define PLL_SSC_EN_CENTER		0x00B4
+#define PLL_BKG_KVCO_CAL_EN		0x002C
+#define PLL_PLL_CNTRL			0x0014
+#define PLL_FAUX_EN			0x00FC
+#define PLL_DIV_FRAC_START1		0x0100
+#define PLL_DIV_FRAC_START2		0x0104
+#define PLL_DIV_FRAC_START3		0x0108
+#define PLL_DEC_START2			0x010C
+#define PLL_PLL_RXTXEPCLK_EN		0x0110
+#define PLL_PLL_CRCTRL			0x0114
+#define PLL_LOW_POWER_RO_CONTROL	0x013C
+#define PLL_POST_DIVIDER_CONTROL	0x0140
+#define PLL_RESET_SM			0x0150
+
+#define REF_CLK_RATE	19200000UL	/* xo */
+#define VCO_TARGET	883200000UL	/* 883.2 MHz -> 883 Mbps/lane */
+
+struct dsi_pll_20nm {
+	void __iomem *base;
+	struct device *dev;
+};
+
+static inline void pll_write(struct dsi_pll_20nm *p, u32 off, u32 v)
+{
+	writel(v, p->base + off);
+}
+static inline u32 pll_read(struct dsi_pll_20nm *p, u32 off)
+{
+	return readl(p->base + off);
+}
+
+static bool pll_locked(struct dsi_pll_20nm *p)
+{
+	return !!(pll_read(p, PLL_RESET_SM) & BIT(5));
+}
+
+static void pll_common_block_1(struct dsi_pll_20nm *p)
+{
+	pll_write(p, PLL_VCOTAIL_EN, 0x82);
+	pll_write(p, PLL_BIAS_EN_CLKBUFLR_EN, 0x2a);
+	pll_write(p, PLL_BIAS_EN_CLKBUFLR_EN, 0x2b);
+	pll_write(p, PLL_RESETSM_CNTRL3, 0x02);
+}
+
+static void pll_common_block_2(struct dsi_pll_20nm *p)
+{
+	pll_write(p, PLL_SYS_CLK_CTRL, 0x40);
+	pll_write(p, PLL_IE_TRIM, 0x0F);
+	pll_write(p, PLL_IP_TRIM, 0x0F);
+	pll_write(p, PLL_PHSEL_CONTROL, 0x08);
+	pll_write(p, PLL_IPTAT_TRIM_VCCA_TX_SEL, 0x0E);
+	pll_write(p, PLL_BKG_KVCO_CAL_EN, 0x08);
+	pll_write(p, PLL_SYSCLK_EN_SEL_TXBAND, 0x4A);
+	pll_write(p, PLL_DIV_REF1, 0x00);
+	pll_write(p, PLL_DIV_REF2, 0x01);
+	pll_write(p, PLL_PLL_CNTRL, 0x07);
+	pll_write(p, PLL_KVCO_CAL_CNTRL, 0x1f);
+	pll_write(p, PLL_KVCO_COUNT1, 0x8A);
+	pll_write(p, PLL_VREF_CFG3, 0x10);
+	pll_write(p, PLL_SSC_EN_CENTER, 0x00);
+	pll_write(p, PLL_FAUX_EN, 0x0C);
+	pll_write(p, PLL_PLL_RXTXEPCLK_EN, 0x0a);
+	pll_write(p, PLL_LOW_POWER_RO_CONTROL, 0x0f);
+	pll_write(p, PLL_CMN_MODE, 0x00);
+}
+
+static void pll_loop_bw(struct dsi_pll_20nm *p)
+{
+	pll_write(p, PLL_IP_SETI, 0x03);
+	pll_write(p, PLL_PLL_CP_SETI, 0x3F);
+	pll_write(p, PLL_PLL_IP_SETP, 0x03);
+	pll_write(p, PLL_PLL_CP_SETP, 0x1F);
+	pll_write(p, PLL_PLL_CRCTRL, 0x77);
+}
+
+/* vco rate calc, CAF pll_20nm_vco_rate_calc (no 90-degree phase) */
+static void pll_vco_calc(u64 vco_rate, u32 *dec1, u32 *dec2, u32 *frac1,
+			 u32 *frac2, u32 *frac3, u32 *cmp1, u32 *cmp2, u32 *cmp3)
+{
+	u64 multiplier = 1ULL << 20;
+	u64 dec_start_multiple = div64_u64(vco_rate * multiplier, 2 * REF_CLK_RATE);
+	u32 div_frac_start = do_div(dec_start_multiple, multiplier);
+	u64 dec_start = dec_start_multiple;
+	u64 comp;
+
+	*dec1 = (dec_start & 0x7f) | BIT(7);
+	*dec2 = ((dec_start & 0x80) >> 7) | BIT(1);
+	*frac1 = (div_frac_start & 0x7f) | BIT(7);
+	*frac2 = ((div_frac_start >> 7) & 0x7f) | BIT(7);
+	*frac3 = ((div_frac_start >> 14) & 0x3f) | BIT(6);
+	comp = div64_u64(dec_start_multiple * 2 * 1024, 10 * multiplier) - 1;
+	*cmp1 = comp & 0xff;
+	*cmp2 = (comp >> 8) & 0xff;
+	*cmp3 = (comp >> 16) & 0xff;
+}
+
+static void pll_vco_rate(struct dsi_pll_20nm *p, u64 rate)
+{
+	u32 dec1, dec2, f1, f2, f3, c1, c2, c3;
+
+	pll_vco_calc(rate, &dec1, &dec2, &f1, &f2, &f3, &c1, &c2, &c3);
+	pll_write(p, PLL_POST_DIVIDER_CONTROL, 0x90);
+	pll_write(p, PLL_PLLLOCK_CMP1, c1);
+	pll_write(p, PLL_PLLLOCK_CMP2, c2);
+	pll_write(p, PLL_PLLLOCK_CMP3, c3);
+	pll_write(p, PLL_DEC_START1, dec1);
+	pll_write(p, PLL_DEC_START2, dec2);
+	pll_write(p, PLL_DIV_FRAC_START1, f1);
+	pll_write(p, PLL_DIV_FRAC_START2, f2);
+	pll_write(p, PLL_DIV_FRAC_START3, f3);
+}
+
+static void pll_resetsm(struct dsi_pll_20nm *p)
+{
+	pll_write(p, PLL_KVCO_CODE, 0x00);
+	pll_write(p, PLL_VCO_TUNE, 0x00);
+	pll_write(p, PLL_RESETSM_CNTRL, 0x24);
+	pll_write(p, PLL_RESETSM_CNTRL2, 0x07);
+}
+
+static void pll_vco_start(struct dsi_pll_20nm *p)
+{
+	pll_write(p, PLL_VCOTAIL_EN, 0x03);
+	pll_write(p, PLL_RESETSM_CNTRL3, 0x02);
+	udelay(10);
+	pll_write(p, PLL_RESETSM_CNTRL3, 0x03);
+}
+
+static int dsi_pll_20nm_probe(struct platform_device *pdev)
+{
+	struct dsi_pll_20nm *p;
+	struct resource *res;
+	u32 v;
+	int i, ret;
+
+	p = devm_kzalloc(&pdev->dev, sizeof(*p), GFP_KERNEL);
+	if (!p)
+		return -ENOMEM;
+	p->dev = &pdev->dev;
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	p->base = devm_ioremap_resource(&pdev->dev, res);
+	if (IS_ERR(p->base))
+		return PTR_ERR(p->base);
+
+	/* report the bootloader's current VCO rate */
+	{
+		u32 d1 = pll_read(p, PLL_DEC_START1) & 0x7f;
+		u32 d2 = (pll_read(p, PLL_DEC_START2) & BIT(0)) << 7;
+		u32 f3 = (pll_read(p, PLL_DIV_FRAC_START3) & 0x3f) << 14;
+		u32 f2 = (pll_read(p, PLL_DIV_FRAC_START2) & 0x7f) << 7;
+		u32 f1 = pll_read(p, PLL_DIV_FRAC_START1) & 0x7f;
+		u64 dec = d1 | d2;
+		u32 frac = f1 | f2 | f3;
+		u64 vco = REF_CLK_RATE * 2 * dec + div64_u64(REF_CLK_RATE * 2ULL * frac, 1ULL << 20);
+		dev_info(&pdev->dev, "bootloader PLL: VCO %llu Hz (dec=%llu frac=%u) lock=%d\n",
+			 vco, dec, frac, pll_locked(p));
+	}
+	if (!op2_dsipll)
+		return 0;
+	/* full enable sequence to the DT rate */
+	pll_common_block_1(p);
+	pll_common_block_2(p);
+	pll_loop_bw(p);
+	pll_vco_rate(p, VCO_TARGET);
+	pll_resetsm(p);
+	pll_vco_start(p);
+	wmb();
+	for (i = 0; i < 100000; i++) {
+		v = pll_read(p, PLL_RESET_SM);
+		if (v & BIT(5))
+			break;
+		udelay(1);
+	}
+	ret = (v & BIT(5)) ? 0 : -ETIMEDOUT;
+	dev_info(&pdev->dev, "20nm DSI PLL: VCO %lu Hz, RESET_SM=0x%x (%s)\n",
+		 VCO_TARGET, v, ret ? "NOT LOCKED" : "locked");
+	platform_set_drvdata(pdev, p);
+	return ret;
+}
+
+static const struct of_device_id dsi_pll_20nm_of_match[] = {
+	{ .compatible = "qcom,dsi-pll-20nm" },
+	{ }
+};
+MODULE_DEVICE_TABLE(of, dsi_pll_20nm_of_match);
+
+static struct platform_driver dsi_pll_20nm_driver = {
+	.probe = dsi_pll_20nm_probe,
+	.driver = {
+		.name = "dsi-pll-20nm",
+		.of_match_table = dsi_pll_20nm_of_match,
+	},
+};
+module_platform_driver(dsi_pll_20nm_driver);
+
+MODULE_DESCRIPTION("Qualcomm 20nm DSI PLL (CAF port) — relock to DT rate at probe");
+MODULE_LICENSE("GPL");

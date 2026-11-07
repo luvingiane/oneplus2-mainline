@@ -1,0 +1,76 @@
+diff -ruN a/drivers/media/platform/qcom/camss/camss-csiphy-2ph-1-0.c b/drivers/media/platform/qcom/camss/camss-csiphy-2ph-1-0.c
+--- a/drivers/media/platform/qcom/camss/camss-csiphy-2ph-1-0.c	2026-11-06 01:55:53.809252905 +0100
++++ b/drivers/media/platform/qcom/camss/camss-csiphy-2ph-1-0.c	2026-11-06 01:56:06.431842726 +0100
+@@ -27,6 +27,14 @@
+ #define CAMSS_CSI_PHY_GLBL_T_INIT_CFG0		0x1ec
+ #define CAMSS_CSI_PHY_T_WAKEUP_CFG0		0x1f4
+ 
++/* msm8994 CSIPHY v3.1.1 (20nm): per-lane block offsets used by CAF
++ * msm_csiphy.c is_3_1_20nm_hw path (csiphy_v3_1: test_imp=0x1C, misc1=0x28) */
++#define CAMSS_CSI_PHY_LNn_TEST_IMP(n)		(0x01c + 0x40 * (n))
++#define CAMSS_CSI_PHY_LNn_MISC1(n)		(0x028 + 0x40 * (n))
++#define CAMSS_CSI_PHY_LNn_MISC1_IS_CLKLANE	BIT(2)
++#define CAMSS_CSI_PHY_LNn_MISC1_LANE_RIGHT	BIT(3)
++#define CAMSS_CSI_PHY_LNn_TEST_IMP_HS_TERM	0x17
++
+ static u8 csiphy_get_lane_mask(struct csiphy_lanes_cfg *lane_cfg)
+ {
+ 	u8 lane_mask;
+@@ -101,7 +109,8 @@
+ 	struct csiphy_lanes_cfg *c = &cfg->csi2->lane_cfg;
+ 	u8 settle_cnt;
+ 	u8 val, l = 0;
+-	int i = 0;
++	u8 lane_val;
++	int i = 0, curr_lane;
+ 
+ 	settle_cnt = csiphy_settle_cnt_calc(link_freq, csiphy->timer_clk_rate);
+ 
+@@ -132,6 +141,36 @@
+ 		writel_relaxed(0x3f, csiphy->base +
+ 			       CAMSS_CSI_PHY_INTERRUPT_CLEARn(l));
+ 	}
++
++	/*
++	 * msm8994 CSIPHY v3.1.1 is 20nm hardware: CAF msm_csiphy.c
++	 * (is_3_1_20nm_hw, msm_csiphy.c:190-222) also writes LNc_MISC1
++	 * (clock-lane marker / lanes right of clock) and LNc_TEST_IMP
++	 * (HS termination impedance) for every lane in the mask, in
++	 * ascending lane order. Without them the receiver never locks
++	 * and INTERRUPT_STATUSn stays 0.
++	 */
++	lane_val = 0;
++	curr_lane = 0;
++	for (i = 0; i < 5; i++) {
++		if (!(lane_mask & (1 << i)))
++			continue;
++
++		if (i > CAMSS_CSI_PHY_LN_CLK)
++			lane_val = CAMSS_CSI_PHY_LNn_MISC1_LANE_RIGHT |
++				((c->num_data - curr_lane) << 4);
++		else if (i == CAMSS_CSI_PHY_LN_CLK)
++			lane_val = CAMSS_CSI_PHY_LNn_MISC1_IS_CLKLANE;
++		if (cfg->combo_mode && curr_lane == 0 &&
++		    (lane_mask & 0x18) == 0x18)
++			lane_val = CAMSS_CSI_PHY_LNn_MISC1_IS_CLKLANE;
++
++		writel_relaxed(lane_val, csiphy->base +
++			       CAMSS_CSI_PHY_LNn_MISC1(i));
++		writel_relaxed(CAMSS_CSI_PHY_LNn_TEST_IMP_HS_TERM, csiphy->base +
++			       CAMSS_CSI_PHY_LNn_TEST_IMP(i));
++		curr_lane++;
++	}
+ }
+ 
+ static void csiphy_lanes_disable(struct csiphy_device *csiphy,
+@@ -149,6 +188,10 @@
+ 
+ 		writel_relaxed(0x0, csiphy->base +
+ 			       CAMSS_CSI_PHY_LNn_CFG2(l));
++		writel_relaxed(0x0, csiphy->base +
++			       CAMSS_CSI_PHY_LNn_MISC1(l));
++		writel_relaxed(0x0, csiphy->base +
++			       CAMSS_CSI_PHY_LNn_TEST_IMP(l));
+ 	}
+ 
+ 	writel_relaxed(0x0, csiphy->base + CAMSS_CSI_PHY_GLBL_PWR_CFG);

@@ -1,0 +1,12 @@
+[Unit]
+Description=Give the Bluetooth controller a valid address
+ConditionPathExists=/sys/class/bluetooth/hci0
+Before=bluetooth.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/op2-bt-addr
+
+[Install]
+WantedBy=bluetooth.service

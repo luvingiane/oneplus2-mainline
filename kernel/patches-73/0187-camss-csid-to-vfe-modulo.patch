@@ -1,0 +1,32 @@
+--- a/drivers/media/platform/qcom/camss/camss.c	2026-11-06 09:07:44.744298170 +0100
++++ b/drivers/media/platform/qcom/camss/camss.c	2026-11-06 09:07:44.759445834 +0100
+@@ -4911,24 +4911,17 @@
+ 
+ static int vfe_parent_dev_ops_get(struct camss *camss, int id)
+ {
+-	int ret = -EINVAL;
++	struct vfe_device *vfe;
+ 
+-	if (id < camss->res->vfe_num) {
+-		struct vfe_device *vfe = &camss->vfe[id];
++	/* msm8994/8996 have more CSIDs than VFEs: CSID n feeds VFE n % vfe_num */
++	vfe = &camss->vfe[id % camss->res->vfe_num];
+ 
+-		ret = vfe_get(vfe);
+-	}
+-
+-	return ret;
++	return vfe_get(vfe);
+ }
+ 
+ static int vfe_parent_dev_ops_put(struct camss *camss, int id)
+ {
+-	if (id < camss->res->vfe_num) {
+-		struct vfe_device *vfe = &camss->vfe[id];
+-
+-		vfe_put(vfe);
+-	}
++	vfe_put(&camss->vfe[id % camss->res->vfe_num]);
+ 
+ 	return 0;
+ }

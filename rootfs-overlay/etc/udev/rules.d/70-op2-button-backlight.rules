@@ -1,0 +1,2 @@
+# the session (ztmetro, user zerone) lights the soft keys with the display
+SUBSYSTEM=="leds", KERNEL=="button-backlight", RUN+="/bin/chmod 0666 /sys/class/leds/%k/brightness"

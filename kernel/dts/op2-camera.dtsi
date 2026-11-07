@@ -1,0 +1,190 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * OnePlus 2 (incluso dentro #ifdef OP2_CAMSS): CCI + fotocamera frontale
+ * OV5648 su CAMSS mainline 7.3 (qcom,msm8994-camss -> msm8996_resources,
+ * patch 0136; camss bindato su A con s199c: /dev/media0 + 6 video, LOG.md:1930).
+ *
+ * Hardware dal DT stock (research/downstream-dtb/op2-hw14.dtb, decompilato):
+ * - CCI qcom,cci@fda0c000: reg 0xfda0c000/0x1000, IRQ GIC_SPI 50 (0x32),
+ *   gpio tlmm 17/18 = master 0, 19/20 = master 1,
+ *   cci_src 19.2 MHz std / 37.5 MHz fast+ (qcom,clock-rates 0x124f800/0x23c3460).
+ * - Frontale: CCI master 1, indirizzo I2C 0x36, csiphy2/csid2 (port@2),
+ *   MCLK2 = gpio15 a 24 MHz, reset gpio104, standby gpio105,
+ *   cam_vdig = pm8994_l3 1.2 V, cam_vio = pm8994_lvs1 1.8 V,
+ *   cam_vana = pm8994_l17 2.7 V.
+ * - Posteriore OV13860 (master 0, csiphy0, MCLK0 gpio13, reset gpio92,
+ *   standby gpio102, vaf gpio93 + pm8994_l29 2.8 V): nessun driver in
+ *   mainline 7.3 (grep ov13860 in drivers/media = 0 hit) -> il nodo va
+ *   aggiunto quando arriva il driver; indirizzo I2C da confermare con
+ *   i2cdetect su A (l'eeprom rear e' a 0x50).
+ */
+
+&rpm_requests {
+	regulators-0 {
+		vdd_l3_l11-supply = <&vph_pwr>;
+		vdd_l17_l29-supply = <&vph_pwr>;
+		vdd_l13_l19_l23_l24-supply = <&vph_pwr>;
+
+		/* cam_vdig: 1.2 V front / 1.25 V rear (stock), stessa rail */
+		pm8994_l3: l3 {
+			regulator-min-microvolt = <1200000>;
+			regulator-max-microvolt = <1250000>;
+		};
+
+		/* cam_vana 2.7 V */
+		pm8994_l17: l17 {
+			regulator-min-microvolt = <2700000>;
+			regulator-max-microvolt = <2700000>;
+		};
+
+		/* cam_vaf (actuator@1) 2.8 V */
+		pm8994_l23: l23 {
+			regulator-min-microvolt = <2800000>;
+			regulator-max-microvolt = <2800000>;
+		};
+
+		/* cam_v_custom1 (VAF rear) 2.8 V */
+		pm8994_l29: l29 {
+			regulator-min-microvolt = <2800000>;
+			regulator-max-microvolt = <2800000>;
+		};
+
+#ifndef OP2_SENSORS_LVS1
+		/* cam_vio 1.8 V, LVS switch (gia' definito da op2-sensors.dtsi
+		 * quando OP2_SENSORS_LVS1 e' on: stesso label, niente duplicato) */
+		pm8994_lvs1: lvs1 {
+			status = "okay";
+		};
+#endif
+	};
+};
+
+&tlmm {
+	cci0_default: cci0-default-state {
+		pins = "gpio17", "gpio18";
+		function = "cci_i2c0";
+	};
+
+	cci1_default: cci1-default-state {
+		pins = "gpio19", "gpio20";
+		function = "cci_i2c1";
+	};
+
+	cam_mclk2_default: cam-mclk2-default-state {
+		pins = "gpio15";
+		function = "cam_mclk2";
+		drive-strength = <2>;
+		bias-disable;
+	};
+
+	cam_front_default: cam-front-default-state {
+		pins = "gpio104", "gpio105";
+		function = "gpio";
+	};
+};
+
+&soc {
+	cci: cci@fda0c000 {
+		/* msm8994 ha 2 master CCI come msm8996: cci_v2_data
+		 * (i2c-qcom-cci.c:713-714, num_masters = 2); in 7.3 non esiste
+		 * "qcom,msm8994-cci" (tabella i2c-qcom-cci.c:804-815) */
+		compatible = "qcom,msm8996-cci";
+		#address-cells = <1>;
+		#size-cells = <0>;
+		reg = <0xfda0c000 0x1000>;
+		interrupts = <GIC_SPI 50 IRQ_TYPE_EDGE_RISING>;
+		power-domains = <&mmcc CAMSS_TOP_GDSC>;
+		clocks = <&mmcc CAMSS_TOP_AHB_CLK>,
+			 <&mmcc CAMSS_CCI_CCI_AHB_CLK>,
+			 <&mmcc CAMSS_CCI_CCI_CLK>,
+			 <&mmcc CAMSS_AHB_CLK>;
+		clock-names = "camss_top_ahb", "cci_ahb", "cci", "camss_ahb";
+		/* stock: cci_src a 37.5 MHz in fast+ (qcom,clock-rates) */
+		assigned-clocks = <&mmcc CCI_CLK_SRC>;
+		assigned-clock-rates = <37500000>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&cci0_default &cci1_default>;
+		status = "okay";
+
+		cci_i2c0: i2c-bus@0 {
+			reg = <0>;
+			clock-frequency = <400000>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+		};
+
+		cci_i2c1: i2c-bus@1 {
+			reg = <1>;
+			clock-frequency = <400000>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+		};
+	};
+};
+
+&camss {
+	ports {
+		port@2 {
+			camss_endpoint2: endpoint {
+				/* 2-phase CSIPHY (8916 style): the driver puts the
+				 * clock lane on position 1; the front OV5648 is wired
+				 * with ONE data lane (stock Kconfig), on position 0 */
+#if defined(OP2_CAMLANE_PHY2)
+				data-lanes = <2>;
+#elif defined(OP2_CAMLANE_PHY3)
+				data-lanes = <3>;
+#elif defined(OP2_CAMLANE_PHY4)
+				data-lanes = <4>;
+#elif defined(OP2_CAMLANE_02)
+				data-lanes = <0 2>;
+#else
+				data-lanes = <0>;
+#endif
+				remote-endpoint = <&cam_front_ep>;
+			};
+		};
+	};
+};
+
+&cci_i2c1 {
+	/* Frontale OV5648: driver mainline ovti,ov5648 (ov5648.c:2616),
+	 * max 2 lane e link-frequencies 210/168 MHz (ov5648.c:940,
+	 * binding ovti,ov5648.yaml), XVCLK tassativo 24 MHz
+	 * (OV5648_XVCLK_RATE ov5648.c:24, check a ov5648.c:2531-2537).
+	 * Pin reset/powerdown active-low: binding ovti,ov5648.yaml e driver
+	 * (GPIOD_OUT_HIGH su entrambi, ov5648.c:2484-2492) */
+	camera_front: camera@36 {
+		compatible = "ovti,ov5648";
+		reg = <0x36>;
+
+		clocks = <&mmcc CAMSS_MCLK2_CLK>;
+		clock-frequency = <24000000>;
+		assigned-clocks = <&mmcc MCLK2_CLK_SRC>, <&mmcc CAMSS_MCLK2_CLK>;
+		assigned-clock-rates = <24000000>, <24000000>;
+
+		reset-gpios = <&tlmm 104 GPIO_ACTIVE_LOW>;
+		powerdown-gpios = <&tlmm 105 GPIO_ACTIVE_LOW>;
+
+		dvdd-supply = <&pm8994_l3>;
+		avdd-supply = <&pm8994_l17>;
+		dovdd-supply = <&pm8994_lvs1>;
+
+		pinctrl-names = "default";
+		pinctrl-0 = <&cam_mclk2_default &cam_front_default>;
+
+		status = "okay";
+
+		port {
+			cam_front_ep: endpoint {
+				/* stock OnePlus Kconfig: "OV5648 ... only use 1 mipi lane" */
+#if defined(OP2_CAMLANE_02)
+				data-lanes = <1 2>;
+#else
+				data-lanes = <1>;
+#endif
+				link-frequencies = /bits/ 64 <210000000 168000000>;
+				remote-endpoint = <&camss_endpoint2>;
+			};
+		};
+	};
+};

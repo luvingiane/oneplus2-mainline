@@ -9,10 +9,10 @@ IMG=${1:?image}
 name=$(basename "$IMG" .img)
 out=$ROOT/logs/boot-$name-$(date +%Y%m%d-%H%M%S)
 mkdir -p "$out"
-timeout 5 fastboot devices | grep -q "^${OP2_SERIAL:?set OP2_SERIAL to your phone serial (see: fastboot devices)}" || { echo "no phone in fastboot mode"; exit 1; }
+timeout 5 fastboot devices | grep -q "^${OP2_SERIAL:-<phone-B>}" || { echo "no phone in fastboot mode"; exit 1; }
 (cd "$(dirname "$IMG")" && sha256sum -c "$name.sha256") || exit 1
-echo "fastboot -s "${OP2_SERIAL:?set OP2_SERIAL to your phone serial (see: fastboot devices)}" boot $IMG (RAM only)"
-fastboot -s "${OP2_SERIAL:?set OP2_SERIAL to your phone serial (see: fastboot devices)}" boot "$IMG" 2>&1 | tee "$out/fastboot.txt"
+echo "fastboot -s "${OP2_SERIAL:-<phone-B>}" boot $IMG (RAM only)"
+fastboot -s "${OP2_SERIAL:-<phone-B>}" boot "$IMG" 2>&1 | tee "$out/fastboot.txt"
 echo "waiting up to 120 s for 172.16.42.1 ..."
 for i in $(seq 1 120); do
 	ping -c1 -W1 172.16.42.1 >/dev/null 2>&1 && break

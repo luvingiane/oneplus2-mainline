@@ -58,7 +58,7 @@
 
 	bluetooth {
 		compatible = "qcom,qca6174-bt";
-		max-speed = <115200>;
+		max-speed = <921600>;	/* A2DP SBC needs ~330 kbit/s: 115200 was far too slow */
 		enable-gpios = <&pm8994_gpios 19 GPIO_ACTIVE_HIGH>;
 		clocks = <&bt_divclk>;
 		/* loads qca/nvm_tlv_3.2.bin + qca/rampatch_tlv_3.2.tlv

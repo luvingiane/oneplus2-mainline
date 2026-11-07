@@ -1,0 +1,12 @@
+# ztOSCoreSensorFramework components for the OnePlus 2: only the pieces this phone really has.
+# (The default list is the Galaxy S9's: zrn_led / zrn_haptic / zrn_hotplug / the sensor hub and the audio DSP
+# service do not exist here, so ztoscsf banners "Did not start" for them.) kind|id|argument|title
+#
+# Not listed yet, because the hardware is not up (add the line when it is):
+#   unit|ztoscorenetworking-modem.service||ztOSCoreNetworking: modem      (modem: not working yet)
+#   unit|ztoscirrusaudio.service||ztOSCirrusAudio                         (audio DSP: not working yet)
+#   unit|ztoscsf-sensord.service||ztOSCoreSensorFramework: sensors        (needs a sensor hub; light/proximity VL6180 via IIO instead)
+unit|op2-usb-watch.service||USB link watcher
+unit|ztoscorenetworking.service||ztOSCoreNetworking: calls, messages, data
+unit|zrnperfd.service||Performance
+session|ztapps||App list

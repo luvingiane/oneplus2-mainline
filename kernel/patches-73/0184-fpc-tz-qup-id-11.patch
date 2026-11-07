@@ -1,0 +1,11 @@
+--- a/drivers/firmware/qcom/op2-fpc-tz.c	2026-11-06 03:00:49.253299782 +0100
++++ b/drivers/firmware/qcom/op2-fpc-tz.c	2026-11-06 03:00:49.257821498 +0100
+@@ -55,7 +55,7 @@
+ module_param(types_region, uint, 0644);
+ static unsigned int types_lib;
+ module_param(types_lib, uint, 0644);
+-static unsigned int qup_id = 6;	/* spi-qup-id del sensore FPC (BLSP2 QUP6) */
++static unsigned int qup_id = 11;	/* TZ numbering: BLSP2 QUP6 = 11 (6 hangs the system; spi-qup-id = <6> is the CAF DT number) */
+ module_param(qup_id, uint, 0644);
+ 
+ struct blob {

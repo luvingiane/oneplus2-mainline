@@ -1,0 +1,48 @@
+--- a/drivers/media/platform/qcom/camss/camss.c	2026-11-06 08:40:28.929765635 +0100
++++ b/drivers/media/platform/qcom/camss/camss.c	2026-11-06 08:40:28.949987571 +0100
+@@ -568,7 +568,7 @@
+ 				 * msm_csiphy_lane_config runs the timer at max (ratio 1), so do
+ 				 * the same instead of picking 100 MHz from link_freq/4 */
+ 				{ 200000000 },
+-				{ 0 },
++				{ 240000000 },
+ 				{ 0 } },
+ 		.reg = { "csiphy0", "csiphy0_clk_mux" },
+ 		.interrupt = { "csiphy0" },
+@@ -597,7 +597,7 @@
+ 				 * msm_csiphy_lane_config runs the timer at max (ratio 1), so do
+ 				 * the same instead of picking 100 MHz from link_freq/4 */
+ 				{ 200000000 },
+-				{ 0 },
++				{ 240000000 },
+ 				{ 0 } },
+ 		.reg = { "csiphy1", "csiphy1_clk_mux" },
+ 		.interrupt = { "csiphy1" },
+@@ -626,7 +626,7 @@
+ 				 * msm_csiphy_lane_config runs the timer at max (ratio 1), so do
+ 				 * the same instead of picking 100 MHz from link_freq/4 */
+ 				{ 200000000 },
+-				{ 0 },
++				{ 240000000 },
+ 				{ 0 } },
+ 		.reg = { "csiphy2", "csiphy2_clk_mux" },
+ 		.interrupt = { "csiphy2" },
+--- a/drivers/media/platform/qcom/camss/camss-csiphy.c	2026-11-06 08:40:28.929859164 +0100
++++ b/drivers/media/platform/qcom/camss/camss-csiphy.c	2026-11-06 08:40:28.950074970 +0100
+@@ -187,6 +187,16 @@
+ 				dev_err(dev, "clk set rate failed: %d\n", ret);
+ 				return ret;
+ 			}
++		} else if (clock->nfreqs && clock->freq[0] &&
++			   strstr(clock->name, "_phy")) {
++			/* msm8994: the PHY digital logic runs from csiN_clk_src,
++			 * stock sets csi_src_clk to 240 MHz (it stays at 19.2 MHz
++			 * otherwise and the lanes never lock) */
++			ret = clk_set_rate(clock->clk, clock->freq[0]);
++			if (ret < 0) {
++				dev_err(dev, "csi phy clk set rate failed: %d\n", ret);
++				return ret;
++			}
+ 		}
+ 	}
+ 

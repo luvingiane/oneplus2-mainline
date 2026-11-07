@@ -1,0 +1,26 @@
+--- a/drivers/slimbus/qcom-ngd-ctrl.c	2026-11-06 01:20:27.045341845 +0100
++++ b/drivers/slimbus/qcom-ngd-ctrl.c	2026-11-06 01:23:11.740330313 +0100
+@@ -111,6 +111,13 @@
+ 	.size = 0x1000,
+ };
+ 
++/* msm8994 (controller HW version 0x0104): CAF slim-msm-ngd.c NGD_BASE(nr, V1) is
++ * +0x800 for the first (odd) NGD, not +0x1000 */
++static const struct ngd_reg_offset_data ngd_v1_4_offset_info = {
++	.offset = 0x800,
++	.size = 0,
++};
++
+ enum qcom_slim_ngd_state {
+ 	QCOM_SLIM_NGD_CTRL_AWAKE,
+ 	QCOM_SLIM_NGD_CTRL_IDLE,
+@@ -1427,6 +1434,9 @@
+ 
+ static const struct of_device_id qcom_slim_ngd_dt_match[] = {
+ 	{
++		.compatible = "qcom,slim-ngd-v1.4.0",
++		.data = &ngd_v1_4_offset_info,
++	},{
+ 		.compatible = "qcom,slim-ngd-v1.5.0",
+ 		.data = &ngd_v1_5_offset_info,
+ 	},{

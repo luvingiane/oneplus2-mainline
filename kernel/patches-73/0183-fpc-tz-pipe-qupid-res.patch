@@ -1,0 +1,95 @@
+--- a/drivers/firmware/qcom/qcom_scm.c
++++ b/drivers/firmware/qcom/qcom_scm.c
+@@ -2409,6 +2409,39 @@
+ EXPORT_SYMBOL_GPL(qcom_scm_set_pipe_ownership);
+ 
+ /*
++ * Come qcom_scm_set_pipe_ownership(), ma riporta anche la risposta completa del
++ * TZ (result[0..2]): serve per capire se TZ accetta la cessione (result[0]=0)
++ * e quali pipe/owner riporta. Patch 0183 (task 351): qup_id esplicito per
++ * provare la numerazione global (11/12) oltre a quella per-BLSP (6) dello stock.
++ */
++int qcom_scm_set_pipe_ownership_res(u32 qup_id, bool to_tz, u64 res3[3])
++{
++	struct qcom_scm_desc desc = {
++		.arginfo = QCOM_SCM_ARGS(2),
++		.args[0] = qup_id,
++		.args[1] = to_tz ? QCOM_SCM_TZBSP_TZ_ID : QCOM_SCM_TZBSP_APSS_ID,
++		.svc = QCOM_SCM_SVC_TZ,
++		.cmd = QCOM_SCM_TZ_BLSP_MODIFY_OWNERSHIP,
++		.owner = ARM_SMCCC_OWNER_SIP,
++	};
++	struct qcom_scm_res res;
++	int ret;
++
++	ret = qcom_scm_call(__scm->dev, &desc, &res);
++	if (res3) {
++		res3[0] = res.result[0];
++		res3[1] = res.result[1];
++		res3[2] = res.result[2];
++	}
++	if (ret)
++		return ret;
++	if (res.result[0])
++		return -EINVAL;
++	return 0;
++}
++EXPORT_SYMBOL_GPL(qcom_scm_set_pipe_ownership_res);
++
++/*
+  * We do not yet support re-entrant calls via the qseecom interface. To prevent
+  + any potential issues with this, only allow validated machines for now.
+  */
+--- a/include/linux/firmware/qcom/qcom_scm.h
++++ b/include/linux/firmware/qcom/qcom_scm.h
+@@ -107,6 +107,7 @@
+ int qcom_scm_iommu_set_cp_pool_size(u32 spare, u32 size);
+ int qcom_scm_get_feat_version(u32 feat, u64 *version);
+ int qcom_scm_set_pipe_ownership(u32 qup_id, bool to_tz);
++int qcom_scm_set_pipe_ownership_res(u32 qup_id, bool to_tz, u64 res3[3]);
+ int qcom_scm_mem_protect_video_var(u32 cp_start, u32 cp_size,
+ 				   u32 cp_nonpixel_start, u32 cp_nonpixel_size);
+ int qcom_scm_assign_mem(phys_addr_t mem_addr, size_t mem_sz, u64 *src,
+--- a/drivers/firmware/qcom/op2-fpc-tz.c
++++ b/drivers/firmware/qcom/op2-fpc-tz.c
+@@ -274,6 +274,40 @@
+ 			return -EINVAL;
+ 		ret = qcom_scm_set_pipe_ownership(qup_id, to_tz);
+ 		say(f, "pipe qup%u -> %s: ret %d", qup_id, to_tz ? "tz" : "ree", ret);
++	} else if (!strcmp(tok, "pipe2")) {
++		/* pipe2 <qup_id> tz|ree|both : come "pipe" ma con qup_id esplicito e
++		 * risposta TZ completa; "both" = cede al TZ e riprende subito (test
++		 * se il lockup nasce dallo stato ceduto o dalla chiamata stessa) */
++		unsigned int q;
++		bool to_tz;
++		u64 res3[3] = {};
++		char dir[8];
++
++		if (!p || kstrtouint(strsep(&p, " "), 10, &q))
++			return -EINVAL;
++		if (!p || strscpy(dir, p, sizeof(dir)) < 0)
++			return -EINVAL;
++		if (!strcmp(dir, "both")) {
++			ret = qcom_scm_set_pipe_ownership_res(q, true, res3);
++			say(f, "pipe2 qup%u -> tz: ret %d res %llx %llx %llx", q, ret,
++			    res3[0], res3[1], res3[2]);
++			if (!ret) {
++				res3[0] = res3[1] = res3[2] = 0;
++				ret = qcom_scm_set_pipe_ownership_res(q, false, res3);
++				say(f, "pipe2 qup%u -> ree: ret %d res %llx %llx %llx", q, ret,
++				    res3[0], res3[1], res3[2]);
++			}
++		} else {
++			if (!strcmp(dir, "tz"))
++				to_tz = true;
++			else if (!strcmp(dir, "ree"))
++				to_tz = false;
++			else
++				return -EINVAL;
++			ret = qcom_scm_set_pipe_ownership_res(q, to_tz, res3);
++			say(f, "pipe2 qup%u -> %s: ret %d res %llx %llx %llx", q,
++			    to_tz ? "tz" : "ree", ret, res3[0], res3[1], res3[2]);
++		}
+ 	} else if (!strcmp(tok, "raw")) {
+ 		/* dump immagine grezza 80x208 (0x4100 B) senza selftest 0x1f:
+ 		 * 1) capture_image 0x1a (req plain); 2) debug_retrieve_raw_image 0x2b

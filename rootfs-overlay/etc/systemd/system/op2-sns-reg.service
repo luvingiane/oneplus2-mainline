@@ -1,0 +1,16 @@
+[Unit]
+Description=Sensor registry server for the ADSP sensor core (SNS_REG)
+# Started AFTER the DSP: the QRTR name service fails to announce a service that exists before the DSP says hello
+# ("failed to announce new service", -ENOENT), and the sensor core then never finds the registry.
+After=op2-adsp.service
+Wants=op2-adsp.service
+ConditionPathExists=/sys/class/remoteproc/remoteproc0/state
+ConditionPathExists=/etc/sns-reg.d/registry.conf
+
+[Service]
+ExecStartPre=/bin/sleep 4
+ExecStart=/usr/local/bin/sns-reg
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

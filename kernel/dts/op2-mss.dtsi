@@ -1,0 +1,103 @@
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * OnePlus 2 (DTS_DEFINES=OP2_MSS): the modem DSP (Hexagon QDSP6v55, "MSS"),
+ * booted by the kernel with the mba image (mba.b00, raw) and modem.mdt + b*
+ * (modem partition, image/), as in CAF qcom,mss@fc880000 (pil-q6v5-mss).
+ * Node values from the stock DTB (op2-hw14) and CAF msm8994.dtsi; the
+ * driver data is "qcom,msm8994-mss-pil" (patch 0167). It does not start by
+ * itself: echo start > /sys/class/remoteproc/remoteprocN/state.
+ * Vibe task 322 (reviewed), assembled here.
+ */
+
+/ {
+	tcsr_mss: syscon@fd485000 {
+		compatible = "syscon";
+		reg = <0 0xfd485000 0 0x400>;
+	};
+
+	mss_pil: remoteproc@fc880000 {
+		compatible = "qcom,msm8994-mss-pil";
+		reg = <0 0xfc880000 0 0x100>,
+		      <0 0xfc820000 0 0x20>;
+		reg-names = "qdsp6", "rmb";
+
+		interrupts-extended = <&intc GIC_SPI 24 IRQ_TYPE_EDGE_RISING>,
+				      <&modem_smp2p_in 0 IRQ_TYPE_EDGE_RISING>,
+				      <&modem_smp2p_in 1 IRQ_TYPE_EDGE_RISING>,
+				      <&modem_smp2p_in 2 IRQ_TYPE_EDGE_RISING>,
+				      <&modem_smp2p_in 3 IRQ_TYPE_EDGE_RISING>;
+		interrupt-names = "wdog", "fatal", "ready",
+				  "handover", "stop-ack";
+
+		clocks = <&rpmcc RPM_SMD_MSS_CFG_AHB_CLK>,
+			 <&gcc GCC_MSS_Q6_BIMC_AXI_CLK>,
+			 <&gcc GCC_BOOT_ROM_AHB_CLK>,
+			 <&gcc GPLL0_OUT_MSSCC>,
+			 <&rpmcc RPM_SMD_XO_CLK_SRC>;
+		clock-names = "iface", "bus", "mem", "gpll0_mss", "xo";
+
+		resets = <&gcc MSS_RESET>;
+		reset-names = "mss_restart";
+
+		qcom,halt-regs = <&tcsr_mss 0x180 0x200 0x280>;
+
+		power-domains = <&rpmpd MSM8994_VDDCX>,
+				<&rpmpd MSM8994_VDDMX>;
+		power-domain-names = "cx", "mx";
+
+		pll-supply = <&pm8994_l12>;
+		mss-supply = <&pm8994_s7>;
+
+		qcom,smem-states = <&modem_smp2p_out 0>;
+		qcom,smem-state-names = "stop";
+
+		firmware-name = "qcom/msm8994/oneplus2/mba.mbn",
+				"qcom/msm8994/oneplus2/modem.mdt";
+
+		mba {
+			memory-region = <&mba_mem>;
+		};
+
+		mpss {
+			memory-region = <&mpss_mem>;
+		};
+
+		smd-edge {
+			interrupts = <GIC_SPI 25 IRQ_TYPE_EDGE_RISING>;
+			label = "mpss";
+			mboxes = <&apcs 12>;
+			qcom,smd-edge = <0>;
+			qcom,remote-pid = <1>;
+		};
+	};
+
+	/* SMSM (apps <-> modem/ADSP state bits), as qcom-msm8974.dtsi and CAF
+	 * qcom,smsm-modem/-adsp: IPC bit 13 (0x2000) to the modem, 9 (0x200) to the
+	 * ADSP; incoming SPI 26 / 157. The modem firmware of this generation waits
+	 * on the apps SMSM state before it starts the call/data tasks (IPOTESI). */
+	smsm {
+		compatible = "qcom,smsm";
+		#address-cells = <1>;
+		#size-cells = <0>;
+		mboxes = <0>, <&apcs 13>, <&apcs 9>;
+
+		apps_smsm: apps@0 {
+			reg = <0>;
+			#qcom,smem-state-cells = <1>;
+		};
+
+		modem_smsm: modem@1 {
+			reg = <1>;
+			interrupts = <GIC_SPI 26 IRQ_TYPE_EDGE_RISING>;
+			interrupt-controller;
+			#interrupt-cells = <2>;
+		};
+
+		adsp_smsm: adsp@2 {
+			reg = <2>;
+			interrupts = <GIC_SPI 157 IRQ_TYPE_EDGE_RISING>;
+			interrupt-controller;
+			#interrupt-cells = <2>;
+		};
+	};
+};

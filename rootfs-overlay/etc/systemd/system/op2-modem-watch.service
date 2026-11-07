@@ -1,0 +1,11 @@
+[Unit]
+Description=OnePlus 2 modem watchdog: recovers rmtfs, the QMI port and the ztOS daemon after a modem restart
+After=op2-modem.service
+Requires=op2-modem.service
+
+[Service]
+ExecStart=/usr/local/bin/op2-modem-watch
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

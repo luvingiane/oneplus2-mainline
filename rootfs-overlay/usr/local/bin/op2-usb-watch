@@ -21,7 +21,7 @@ FALLBACK_S=180
 G=/sys/kernel/config/usb_gadget/op2
 SERIAL=$(sed -n 's/.*androidboot.serialno=\([^ ]*\).*/\1/p' /proc/cmdline)
 case "$SERIAL" in
-SECOND_PHONE_SERIAL) NET=44; MACID=0a ;;
+<phone-A>) NET=44; MACID=0a ;;
 *)        NET=42; MACID=0b ;;
 esac
 PHONE_IP=172.16.$NET.1

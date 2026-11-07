@@ -23,8 +23,11 @@
 		interrupt-names = "wdog", "fatal", "ready",
 				  "handover", "stop-ack";
 
-		clocks = <&rpmcc RPM_SMD_XO_CLK_SRC>;
-		clock-names = "xo";
+		clocks = <&rpmcc RPM_SMD_XO_CLK_SRC>,
+			 <&rpmcc RPM_SMD_CE1_CLK>;
+		clock-names = "xo", "scm_ce1_clk";
+
+		firmware-name = "qcom/msm8994/oneplus2/adsp.mbn";
 
 		power-domains = <&rpmpd MSM8994_VDDCX>;
 		power-domain-names = "cx";

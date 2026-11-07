@@ -1,0 +1,35 @@
+--- a/drivers/media/platform/qcom/camss/camss.c	2026-11-06 02:17:50.540486957 +0100
++++ b/drivers/media/platform/qcom/camss/camss.c	2026-11-06 02:17:59.270495562 +0100
+@@ -540,7 +540,9 @@
+ static const struct camss_subdev_resources csiphy_res_8x94[] = {
+ 	/* CSIPHY0 */
+ 	{
+-		.regulators = {},
++		.regulators = {
++			{ .supply = "vdda", .init_load_uA = 50000 }
++		},
+ 		.clock = { "top_ahb", "ispif_ahb", "ahb", "csiphy0_timer",
+ 			"csi0_phy", "csi0_ahb" },
+ 		/* msm8994: the PHY register block is clocked by its own
+@@ -563,7 +565,9 @@
+ 
+ 	/* CSIPHY1 */
+ 	{
+-		.regulators = {},
++		.regulators = {
++			{ .supply = "vdda", .init_load_uA = 50000 }
++		},
+ 		.clock = { "top_ahb", "ispif_ahb", "ahb", "csiphy1_timer",
+ 			"csi1_phy", "csi1_ahb" },
+ 		/* msm8994: the PHY register block is clocked by its own
+@@ -586,7 +590,9 @@
+ 
+ 	/* CSIPHY2 */
+ 	{
+-		.regulators = {},
++		.regulators = {
++			{ .supply = "vdda", .init_load_uA = 50000 }
++		},
+ 		.clock = { "top_ahb", "ispif_ahb", "ahb", "csiphy2_timer",
+ 			"csi2_phy", "csi2_ahb" },
+ 		/* msm8994: the PHY register block is clocked by its own

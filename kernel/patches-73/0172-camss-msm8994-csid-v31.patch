@@ -1,0 +1,217 @@
+From: Matt <matt@localhost>
+Subject: [PATCH] media: camss: msm8994 resources: CSID v3.1 (4.1 ops) and 2-phase CSIPHY (8916 style)
+
+The msm8994 CSID is v3.1 like msm8916 (CAF qcom,csid-v3.1): RST_CMD is at 0x00c,
+not 0x010, so the 4.7 reset never completed (CSID reset timeout). Own resources
+table: csid ops/formats 4_1, the rest as msm8996.
+
+The VFE genpd_link can be NULL when vfe_put() runs again (error paths): guard it.
+
+---
+--- a/drivers/media/platform/qcom/camss/camss.c
++++ b/drivers/media/platform/qcom/camss/camss.c
+@@ -518,6 +518,60 @@
+ 	}
+ };
+ 
++/* msm8994: CSIPHY v3.1.1 is the 2-phase block of msm8916 (regs at 0x00..), not the 8996 3-phase one */
++static const struct camss_subdev_resources csiphy_res_8x94[] = {
++	/* CSIPHY0 */
++	{
++		.regulators = {},
++		.clock = { "top_ahb", "ispif_ahb", "ahb", "csiphy0_timer" },
++		.clock_rate = { { 0 },
++				{ 0 },
++				{ 0 },
++				{ 100000000, 200000000, 266666667 } },
++		.reg = { "csiphy0", "csiphy0_clk_mux" },
++		.interrupt = { "csiphy0" },
++		.csiphy = {
++			.id = 0,
++			.hw_ops = &csiphy_ops_2ph_1_0,
++			.formats = &csiphy_formats_8x16
++		}
++	},
++
++	/* CSIPHY1 */
++	{
++		.regulators = {},
++		.clock = { "top_ahb", "ispif_ahb", "ahb", "csiphy1_timer" },
++		.clock_rate = { { 0 },
++				{ 0 },
++				{ 0 },
++				{ 100000000, 200000000, 266666667 } },
++		.reg = { "csiphy1", "csiphy1_clk_mux" },
++		.interrupt = { "csiphy1" },
++		.csiphy = {
++			.id = 1,
++			.hw_ops = &csiphy_ops_2ph_1_0,
++			.formats = &csiphy_formats_8x16
++		}
++	},
++
++	/* CSIPHY2 */
++	{
++		.regulators = {},
++		.clock = { "top_ahb", "ispif_ahb", "ahb", "csiphy2_timer" },
++		.clock_rate = { { 0 },
++				{ 0 },
++				{ 0 },
++				{ 100000000, 200000000, 266666667 } },
++		.reg = { "csiphy2", "csiphy2_clk_mux" },
++		.interrupt = { "csiphy2" },
++		.csiphy = {
++			.id = 2,
++			.hw_ops = &csiphy_ops_2ph_1_0,
++			.formats = &csiphy_formats_8x16
++		}
++	}
++};
++
+ static const struct camss_subdev_resources csid_res_8x96[] = {
+ 	/* CSID0 */
+ 	{
+@@ -616,6 +670,105 @@
+ 	}
+ };
+ 
++/* msm8994: CSID v3.1 like msm8916 (RST_CMD at 0x00c), rest as msm8996 */
++static const struct camss_subdev_resources csid_res_8x94[] = {
++	/* CSID0 */
++	{
++		.regulators = {
++			{ .supply = "vdda", .init_load_uA = 80160 }
++		},
++		.clock = { "top_ahb", "ispif_ahb", "csi0_ahb", "ahb",
++			   "csi0", "csi0_phy", "csi0_pix", "csi0_rdi" },
++		.clock_rate = { { 0 },
++				{ 0 },
++				{ 0 },
++				{ 0 },
++				{ 100000000, 200000000, 266666667 },
++				{ 0 },
++				{ 0 },
++				{ 0 } },
++		.reg = { "csid0" },
++		.interrupt = { "csid0" },
++		.csid = {
++			.hw_ops = &csid_ops_4_1,
++			.parent_dev_ops = &vfe_parent_dev_ops,
++			.formats = &csid_formats_4_1
++		}
++	},
++
++	/* CSID1 */
++	{
++		.regulators = {
++			{ .supply = "vdda", .init_load_uA = 80160 }
++		},
++		.clock = { "top_ahb", "ispif_ahb", "csi1_ahb", "ahb",
++			   "csi1", "csi1_phy", "csi1_pix", "csi1_rdi" },
++		.clock_rate = { { 0 },
++				{ 0 },
++				{ 0 },
++				{ 0 },
++				{ 100000000, 200000000, 266666667 },
++				{ 0 },
++				{ 0 },
++				{ 0 } },
++		.reg = { "csid1" },
++		.interrupt = { "csid1" },
++		.csid = {
++			.hw_ops = &csid_ops_4_1,
++			.parent_dev_ops = &vfe_parent_dev_ops,
++			.formats = &csid_formats_4_1
++		}
++	},
++
++	/* CSID2 */
++	{
++		.regulators = {
++			{ .supply = "vdda", .init_load_uA = 80160 }
++		},
++		.clock = { "top_ahb", "ispif_ahb", "csi2_ahb", "ahb",
++			   "csi2", "csi2_phy", "csi2_pix", "csi2_rdi" },
++		.clock_rate = { { 0 },
++				{ 0 },
++				{ 0 },
++				{ 0 },
++				{ 100000000, 200000000, 266666667 },
++				{ 0 },
++				{ 0 },
++				{ 0 } },
++		.reg = { "csid2" },
++		.interrupt = { "csid2" },
++		.csid = {
++			.hw_ops = &csid_ops_4_1,
++			.parent_dev_ops = &vfe_parent_dev_ops,
++			.formats = &csid_formats_4_1
++		}
++	},
++
++	/* CSID3 */
++	{
++		.regulators = {
++			{ .supply = "vdda", .init_load_uA = 80160 }
++		},
++		.clock = { "top_ahb", "ispif_ahb", "csi3_ahb", "ahb",
++			   "csi3", "csi3_phy", "csi3_pix", "csi3_rdi" },
++		.clock_rate = { { 0 },
++				{ 0 },
++				{ 0 },
++				{ 0 },
++				{ 100000000, 200000000, 266666667 },
++				{ 0 },
++				{ 0 },
++				{ 0 } },
++		.reg = { "csid3" },
++		.interrupt = { "csid3" },
++		.csid = {
++			.hw_ops = &csid_ops_4_1,
++			.parent_dev_ops = &vfe_parent_dev_ops,
++			.formats = &csid_formats_4_1
++		}
++	}
++};
++
+ static const struct camss_subdev_resources ispif_res_8x96 = {
+ 	/* ISPIF */
+ 	.clock = { "top_ahb", "ahb", "ispif_ahb",
+@@ -5553,6 +5706,17 @@
+ 	.vfe_num = ARRAY_SIZE(vfe_res_8x96),
+ };
+ 
++static const struct camss_resources msm8994_resources = {
++	.version = CAMSS_8x96,
++	.csiphy_res = csiphy_res_8x94,
++	.csid_res = csid_res_8x94,
++	.ispif_res = &ispif_res_8x96,
++	.vfe_res = vfe_res_8x96,
++	.csiphy_num = ARRAY_SIZE(csiphy_res_8x94),
++	.csid_num = ARRAY_SIZE(csid_res_8x94),
++	.vfe_num = ARRAY_SIZE(vfe_res_8x96),
++};
++
+ static const struct camss_resources qcm2290_resources = {
+ 	.version = CAMSS_2290,
+ 	.csiphy_res = csiphy_res_2290,
+@@ -5745,7 +5909,7 @@
+ 	{ .compatible = "qcom,msm8953-camss", .data = &msm8953_resources },
+ 	{ .compatible = "qcom,msm8996-camss", .data = &msm8996_resources },
+ 	/* op2 0136: msm8994 CAMSS is the same 8x96 generation */
+-	{ .compatible = "qcom,msm8994-camss", .data = &msm8996_resources },
++	{ .compatible = "qcom,msm8994-camss", .data = &msm8994_resources },
+ 	{ .compatible = "qcom,qcm2290-camss", .data = &qcm2290_resources },
+ 	{ .compatible = "qcom,qcs8300-camss", .data = &qcs8300_resources },
+ 	{ .compatible = "qcom,sa8775p-camss", .data = &sa8775p_resources },
+--- a/drivers/media/platform/qcom/camss/camss-vfe.c
++++ b/drivers/media/platform/qcom/camss/camss-vfe.c
+@@ -878,7 +878,7 @@
+  */
+ void vfe_pm_domain_off(struct vfe_device *vfe)
+ {
+-	if (!vfe->genpd)
++	if (!vfe->genpd || !vfe->genpd_link)
+ 		return;
+ 
+ 	device_link_del(vfe->genpd_link);

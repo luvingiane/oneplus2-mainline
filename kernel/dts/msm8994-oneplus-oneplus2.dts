@@ -220,6 +220,13 @@
 		vdd_l8_l16_l30-supply = <&vph_pwr>;
 		vdd_l14_l15-supply = <&vph_pwr>;
 		vdd_l2_l26_l28-supply = <&vph_pwr>;
+#ifdef OP2_MSS
+		vdd_s7-supply = <&vph_pwr>;
+#endif
+#ifdef OP2_SLIM
+		vdd_s5-supply = <&vph_pwr>;
+		vdd_l3_l11-supply = <&vph_pwr>;
+#endif
 
 		pm8994_s4: s4 {
 			regulator-min-microvolt = <1800000>;
@@ -227,12 +234,44 @@
 			regulator-always-on;
 		};
 
+#ifdef OP2_SLIM
+		/* codec rails (stock regulator-s5 2.15 V, regulator-l11 1.2 V; vdd_s4 is above) */
+		pm8994_s5: s5 {
+			regulator-min-microvolt = <2150000>;
+			regulator-max-microvolt = <2150000>;
+		};
+
+		pm8994_l11: l11 {
+			regulator-min-microvolt = <1200000>;
+			regulator-max-microvolt = <1200000>;
+		};
+#endif
+
+#ifdef OP2_MSS
+		/* modem core rail (CAF vdd_mss-supply = pm8994_s7, 1.0 V) */
+		pm8994_s7: s7 {
+			regulator-min-microvolt = <1000000>;
+			regulator-max-microvolt = <1000000>;
+		};
+#endif
+
 #if defined(OP2_BT) || defined(OP2_WIFI)
 		/* QCA6174 crystal (OnePlus qca,bt-vdd-xtal-supply, cnss vdd-wlan-xtal) */
 		pm8994_l30: l30 {
 			regulator-min-microvolt = <1800000>;
 			regulator-max-microvolt = <1800000>;
 			regulator-always-on;
+		};
+#endif
+
+#ifdef OP2_CAMSS
+		/* MIPI CSI analog supply: stock op2-hw14.dtb csiphy/csid qcom,mipi-csi-vdd-supply
+		 * = pm8994_l2, qcom,csi-vdd-voltage = 1250000 */
+		pm8994_l2: l2 {
+			regulator-min-microvolt = <1250000>;
+			regulator-max-microvolt = <1250000>;
+			regulator-system-load = <10000>;
+			regulator-allow-set-load;
 		};
 #endif
 
@@ -494,6 +533,7 @@
 
 #ifdef OP2_CAMSS
 #include "op2-camss.dtsi"
+#include "op2-camera.dtsi"
 #endif
 
 #ifdef OP2_DISPLAY
@@ -551,6 +591,14 @@
 
 #ifdef OP2_AUDIO
 #include "op2-audio.dtsi"
+#endif
+
+#ifdef OP2_MSS
+#include "op2-mss.dtsi"
+#endif
+
+#ifdef OP2_SLIM
+#include "op2-slimbus.dtsi"
 #endif
 
 #include "op2-battery.dtsi"
