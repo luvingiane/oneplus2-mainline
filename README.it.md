@@ -17,18 +17,6 @@ immagini di avvio, piccoli programmi per il telefono e il diario completo del la
 Ultima tappa (2026-11-03): la GPU hardware disegna l'interfaccia di ztOS su mainline 7.3, vedi
 [docs/MILESTONE-2026-11-03.md](docs/MILESTONE-2026-11-03.md) (in inglese).
 
-**19 funzionano · 3 parziali · 9 non funzionano · 7 non provati**
-
-*Funziona* vuol dire il 100% della funzione, provata sul telefono; *Parziale* dice nelle note cosa manca. Stesse parole delle pagine dispositivo di ztOS ([devices.ztos.online](https://devices.ztos.online)).
-
-**20 funzionano · 2 parziali · 10 non funzionano · 6 non provati**
-
-*Funziona* vuol dire il 100% della funzione, provata sul telefono; *Parziale* dice nelle note cosa manca. Stesse parole delle pagine dispositivo di ztOS ([devices.ztos.online](https://devices.ztos.online)).
-
-**21 funzionano · 2 parziali · 9 non funzionano · 6 non provati**
-
-*Funziona* vuol dire il 100% della funzione, provata sul telefono; *Parziale* dice nelle note cosa manca. Stesse parole delle pagine dispositivo di ztOS ([devices.ztos.online](https://devices.ztos.online)).
-
 **23 funzionano · 3 parziali · 8 non funzionano · 4 non provati**
 
 *Funziona* vuol dire il 100% della funzione, provata sul telefono; *Parziale* dice nelle note cosa manca. Stesse parole delle pagine dispositivo di ztOS ([devices.ztos.online](https://devices.ztos.online)).
