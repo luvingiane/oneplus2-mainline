@@ -241,8 +241,8 @@
       "category": "Sensors",
       "feature": "Fingerprint reader",
       "status": "partial",
-      "en": "the FPC1150 answers from Linux over SPI (REE): finger detection and image capture (80x208) work; matching is not done yet",
-      "it": "l'FPC1150 risponde da Linux via SPI (REE): rilevamento del dito e cattura dell'immagine (80x208) funzionano; il riconoscimento non è ancora fatto"
+      "en": "the FPC1150 works from Linux over SPI: finger detection (home key) and image capture (80x208) are verified; fingerprint matching (NBIS mindtct/bozorth3 on the phone, unlock when the screen is locked, the PIN stays) is installed but not yet validated; no settings or lock-screen interface yet (command-line enrolment only): waiting for the ztOS frontend",
+      "it": "l'FPC1150 funziona da Linux via SPI: il rilevamento del dito (tasto home) e la cattura dell'immagine (80x208) sono verificati; il riconoscimento (NBIS mindtct/bozorth3 sul telefono, sblocco a schermo bloccato, il PIN resta) è installato ma non ancora validato; nessuna interfaccia in Impostazioni o sulla schermata di blocco (registrazione solo da riga di comando): in attesa del frontend di ztOS"
     },
     {
       "category": "Power",

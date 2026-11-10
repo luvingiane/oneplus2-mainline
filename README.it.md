@@ -21,6 +21,10 @@ Ultima tappa (2026-11-03): la GPU hardware disegna l'interfaccia di ztOS su main
 
 *Funziona* vuol dire il 100% della funzione, provata sul telefono; *Parziale* dice nelle note cosa manca. Stesse parole delle pagine dispositivo di ztOS ([devices.ztos.online](https://devices.ztos.online)).
 
+**23 funzionano · 3 parziali · 8 non funzionano · 4 non provati**
+
+*Funziona* vuol dire il 100% della funzione, provata sul telefono; *Parziale* dice nelle note cosa manca. Stesse parole delle pagine dispositivo di ztOS ([devices.ztos.online](https://devices.ztos.online)).
+
 | Categoria | Funzione | Stato | Note |
 |---|---|---|---|
 | Boot | Mainline kernel boot (7.3), from RAM and from flash | 🟢 Funziona | `fastboot boot` e partizione boot; l'avvio a freddo arriva alla shell ztMETRO |
@@ -56,7 +60,7 @@ Ultima tappa (2026-11-03): la GPU hardware disegna l'interfaccia di ztOS su main
 | Sensors | Proximity | 🔴 Non funziona | dà un valore costante anche se coperto (non ancora capito) |
 | Sensors | Accelerometer, gyroscope, magnetometer | ⚪ Non provato | l'ADSP li invia (`op2-sensord watch`), non controllati; niente rotazione automatica |
 | Sensors | Hall sensor | ⚪ Non provato | `SW_MACHINE_COVER` sul GPIO 75 |
-| Sensors | Fingerprint reader | 🟡 Parziale | l'FPC1150 risponde da Linux via SPI (REE): rilevamento del dito e cattura dell'immagine (80x208) funzionano; il riconoscimento non è ancora fatto |
+| Sensors | Fingerprint reader | 🟡 Parziale | l'FPC1150 funziona da Linux via SPI: il rilevamento del dito (tasto home) e la cattura dell'immagine (80x208) sono verificati; il riconoscimento (NBIS mindtct/bozorth3 sul telefono, sblocco a schermo bloccato, il PIN resta) è installato ma non ancora validato; nessuna interfaccia in Impostazioni o sulla schermata di blocco (registrazione solo da riga di comando): in attesa del frontend di ztOS |
 | Power | Battery and charging | 🟢 Funziona | si carica fino in fondo (tensione massima 4,32 V e fine carica 150 mA come il firmware originale; il bootloader lascia 4,2 V / 250 mA e la carica si fermava all'85%); il tipo di caricatore viene letto a ogni collegamento |
 | Power | Temperature and thermal throttling | 🟢 Funziona | 16 zone TSENS dai fusibili; `op2-thermal.py` rallenta i post-divisori dei PLL |
 | Power | Vibration | 🟢 Funziona | motore ERM tramite il driver haptic del PMI8994; intensità tarata nella shell (durata e livello degli impulsi) |

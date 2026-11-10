@@ -21,6 +21,10 @@ Latest milestone (2026-11-03): the hardware GPU renders the ztOS UI on mainline 
 
 *Working* means 100% of the feature, tried on the phone; *Partial* says in the notes what is missing. Same wording as the ztOS device pages ([devices.ztos.online](https://devices.ztos.online)).
 
+**23 working · 3 partial · 8 broken · 4 untested**
+
+*Working* means 100% of the feature, tried on the phone; *Partial* says in the notes what is missing. Same wording as the ztOS device pages ([devices.ztos.online](https://devices.ztos.online)).
+
 | Category | Feature | Status | Notes |
 |---|---|---|---|
 | Boot | Mainline kernel boot (7.3), from RAM and from flash | 🟢 Working | `fastboot boot` and the boot partition; cold start reaches the ztMETRO shell |
@@ -56,7 +60,7 @@ Latest milestone (2026-11-03): the hardware GPU renders the ztOS UI on mainline 
 | Sensors | Proximity | 🔴 Broken | returns a constant value even when covered (not understood yet) |
 | Sensors | Accelerometer, gyroscope, magnetometer | ⚪ Untested | the ADSP streams them (`op2-sensord watch`), not checked; no auto-rotation |
 | Sensors | Hall sensor | ⚪ Untested | `SW_MACHINE_COVER` on GPIO 75 |
-| Sensors | Fingerprint reader | 🟡 Partial | the FPC1150 answers from Linux over SPI (REE): finger detection and image capture (80x208) work; matching is not done yet |
+| Sensors | Fingerprint reader | 🟡 Partial | the FPC1150 works from Linux over SPI: finger detection (home key) and image capture (80x208) are verified; fingerprint matching (NBIS mindtct/bozorth3 on the phone, unlock when the screen is locked, the PIN stays) is installed but not yet validated; no settings or lock-screen interface yet (command-line enrolment only): waiting for the ztOS frontend |
 | Power | Battery and charging | 🟢 Working | charges to full (float 4.32 V, taper 150 mA as the stock firmware; the bootloader left 4.2 V / 250 mA, so charging used to stop at ~85 %); charger type detected on every plug-in; USB-C supplies without PD still count as 500 mA class unless the port reads as wall/CDP |
 | Power | Temperature and thermal throttling | 🟢 Working | 16 TSENS zones from the fuses; `op2-thermal.py` throttles the PLL post-dividers |
 | Power | Vibration | 🟢 Working | ERM motor through the PMI8994 haptic driver; strength tuned in the shell (pulse length and level) |
