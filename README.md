@@ -17,18 +17,6 @@ on-phone tools and the complete bring-up diary.
 Latest milestone (2026-11-03): the hardware GPU renders the ztOS UI on mainline 7.3, see
 [docs/MILESTONE-2026-11-03.md](docs/MILESTONE-2026-11-03.md).
 
-**19 working · 3 partial · 9 broken · 7 untested**
-
-*Working* means 100% of the feature, tried on the phone; *Partial* says in the notes what is missing. Same wording as the ztOS device pages ([devices.ztos.online](https://devices.ztos.online)).
-
-**20 working · 2 partial · 10 broken · 6 untested**
-
-*Working* means 100% of the feature, tried on the phone; *Partial* says in the notes what is missing. Same wording as the ztOS device pages ([devices.ztos.online](https://devices.ztos.online)).
-
-**21 working · 2 partial · 9 broken · 6 untested**
-
-*Working* means 100% of the feature, tried on the phone; *Partial* says in the notes what is missing. Same wording as the ztOS device pages ([devices.ztos.online](https://devices.ztos.online)).
-
 **23 working · 3 partial · 8 broken · 4 untested**
 
 *Working* means 100% of the feature, tried on the phone; *Partial* says in the notes what is missing. Same wording as the ztOS device pages ([devices.ztos.online](https://devices.ztos.online)).
