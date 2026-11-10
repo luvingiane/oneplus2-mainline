@@ -27,6 +27,12 @@ for fn, lang, start in (("README.md", "en", "## Status (short)"), ("README.it.md
     i = s.index(start)
     # keep the milestone sentence under the heading, replace the table up to the "Full per-component" paragraph
     j = s.index("\n| ", i)
+    # drop the count/legend lines an earlier run left above the table (they used to pile up: one more block per run)
+    head = s[i:j + 1]
+    head = re.sub(r"(?m)^\*\*\d+ (working|funzionano) .*\n\n?", "", head)
+    head = re.sub(r"(?m)^\*(Working|Funziona)\* (means|vuol dire) .*\n\n?", "", head)
+    s = s[:i] + head + s[j + 1:]
+    j = i + len(head) - 1
     k = s.index("\n\n", s.index("\n|", j) if False else j)
     # the table ends at the first blank line after it starts
     end = s.index("\n\n", j + 1)

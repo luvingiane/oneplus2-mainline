@@ -21,10 +21,6 @@ Latest milestone (2026-11-03): the hardware GPU renders the ztOS UI on mainline 
 
 *Working* means 100% of the feature, tried on the phone; *Partial* says in the notes what is missing. Same wording as the ztOS device pages ([devices.ztos.online](https://devices.ztos.online)).
 
-**23 working · 3 partial · 8 broken · 4 untested**
-
-*Working* means 100% of the feature, tried on the phone; *Partial* says in the notes what is missing. Same wording as the ztOS device pages ([devices.ztos.online](https://devices.ztos.online)).
-
 | Category | Feature | Status | Notes |
 |---|---|---|---|
 | Boot | Mainline kernel boot (7.3), from RAM and from flash | 🟢 Working | `fastboot boot` and the boot partition; cold start reaches the ztMETRO shell |

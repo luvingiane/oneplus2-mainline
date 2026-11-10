@@ -21,10 +21,6 @@ Ultima tappa (2026-11-03): la GPU hardware disegna l'interfaccia di ztOS su main
 
 *Funziona* vuol dire il 100% della funzione, provata sul telefono; *Parziale* dice nelle note cosa manca. Stesse parole delle pagine dispositivo di ztOS ([devices.ztos.online](https://devices.ztos.online)).
 
-**23 funzionano · 3 parziali · 8 non funzionano · 4 non provati**
-
-*Funziona* vuol dire il 100% della funzione, provata sul telefono; *Parziale* dice nelle note cosa manca. Stesse parole delle pagine dispositivo di ztOS ([devices.ztos.online](https://devices.ztos.online)).
-
 | Categoria | Funzione | Stato | Note |
 |---|---|---|---|
 | Boot | Mainline kernel boot (7.3), from RAM and from flash | 🟢 Funziona | `fastboot boot` e partizione boot; l'avvio a freddo arriva alla shell ztMETRO |
