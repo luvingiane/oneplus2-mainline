@@ -1,0 +1,37 @@
+--- a/arch/arm64/kernel/cpu_errata.c
++++ b/arch/arm64/kernel/cpu_errata.c
+@@ -674,6 +674,19 @@
+ };
+ #endif
+ 
++#ifdef CONFIG_ARM64_ERRATUM_832075
++/* OP2 (task 445): the boot CPU is a Cortex-A53, so an A57-only match never
++ * sets ARM64_WORKAROUND_DEVICE_LOAD_ACQUIRE system-wide and the late A57
++ * cores (brought up through ACC) run without the workaround ("capability
++ * not enabled system-wide"). Matching the A53 boot CPU too makes the
++ * device-load-acquire alternative apply at boot for the whole system. */
++static const struct midr_range erratum_832075_list[] = {
++	MIDR_RANGE(MIDR_CORTEX_A57, 0, 0, 1, 2),
++	MIDR_ALL_VERSIONS(MIDR_CORTEX_A53),
++	{},
++};
++#endif
++
+ const struct arm64_cpu_capabilities arm64_errata[] = {
+ #ifdef CONFIG_ARM64_WORKAROUND_CLEAN_CACHE
+ 	{
+@@ -685,12 +698,10 @@
+ #endif
+ #ifdef CONFIG_ARM64_ERRATUM_832075
+ 	{
+-	/* Cortex-A57 r0p0 - r1p2 */
++	/* Cortex-A57 r0p0 - r1p2 (+ A53 boot CPU, see erratum_832075_list) */
+ 		.desc = "ARM erratum 832075",
+ 		.capability = ARM64_WORKAROUND_DEVICE_LOAD_ACQUIRE,
+-		ERRATA_MIDR_RANGE(MIDR_CORTEX_A57,
+-				  0, 0,
+-				  1, 2),
++		ERRATA_MIDR_RANGE_LIST(erratum_832075_list),
+ 	},
+ #endif
+ #ifdef CONFIG_ARM64_ERRATUM_834220

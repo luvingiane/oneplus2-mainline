@@ -25,23 +25,31 @@ Latest milestone (2026-11-03): the hardware GPU renders the ztOS UI on mainline 
 
 *Working* means 100% of the feature, tried on the phone; *Partial* says in the notes what is missing. Same wording as the ztOS device pages ([devices.ztos.online](https://devices.ztos.online)).
 
+**21 working · 2 partial · 9 broken · 6 untested**
+
+*Working* means 100% of the feature, tried on the phone; *Partial* says in the notes what is missing. Same wording as the ztOS device pages ([devices.ztos.online](https://devices.ztos.online)).
+
+**23 working · 3 partial · 8 broken · 4 untested**
+
+*Working* means 100% of the feature, tried on the phone; *Partial* says in the notes what is missing. Same wording as the ztOS device pages ([devices.ztos.online](https://devices.ztos.online)).
+
 | Category | Feature | Status | Notes |
 |---|---|---|---|
 | Boot | Mainline kernel boot (7.3), from RAM and from flash | 🟢 Working | `fastboot boot` and the boot partition; cold start reaches the ztMETRO shell |
 | Boot | Boot logo | 🟢 Working | Arch Linux logo in the `LOGO` partition (`tools/boot-logo`) |
 | Boot | CPU, 4 × A53 | 🟢 Working | CAF-style ACC bring-up (patch 0010), fixed clock of about 1.5 GHz |
-| Boot | CPU, 4 × A57 | 🔴 Broken | they come up with a real clock but the boot becomes intermittent (3 of 4 starts); left off |
+| Boot | CPU, 4 × A57 | 🟡 Partial | powered up and stable under full load at a fixed 600 MHz (8 cores, with the display and GPU on); a higher clock via the cluster PLL crashes the boot together with the GPU (cause being researched); kept off by default because 8 cores run hot |
 | Boot | CPU frequency scaling | 🔴 Broken | no cpufreq: clock driver and OPP table are drafts, a 1 V / 1536 MHz try crashed the boot |
 | Display | Panel (JD35695, 1080p, DSI command mode) | 🟢 Working | own panel driver (`kernel/panel`), MDP5 + DSI |
 | Display | GPU (Adreno 430) | 🟢 Working | hardware OpenGL ES 3.0 (freedreno) draws the whole UI; needs patches 0130 + 0144 (identity IOVA, TZ refuses the SMMU) |
 | Input | Touchscreen (Synaptics S3320) | 🟢 Working | multi-touch; GPIO 74 must stay on |
 | Input | Power and volume keys | 🟢 Working | screenshot on power + volume up, volume with the screen off |
-| Input | Capacitive touch keys | 🟡 Partial | events arrive and the left key acts as Home; the other key is not checked |
+| Input | Capacitive touch keys | 🟢 Working | back and recents (search) keys work; the home key is the fingerprint pad, read over SPI by the op2-fpcd daemon (KEY_HOMEPAGE through uinput) |
 | Input | Alert slider | 🟢 Working | `gpio-keys` F13/F15 |
 | Audio | Loudspeaker | 🟢 Working | ADSP + q6 quaternary MI2S → TFA9890 |
 | Audio | Earpiece, headphone jack, microphones | 🔴 Broken | WCD9330 codec: the SLIMbus never enumerates (capability exchange times out), no mainline codec driver |
 | Audio | Audio of a phone call | 🔴 Broken | needs the modem-to-codec path on SLIMbus |
-| Audio | Ringtone | 🔴 Broken | the phone does not ring on an incoming call (the caller does hear ringing); cause not found yet |
+| Audio | Ringtone | 🟢 Working | the phone rings on an incoming call (the ringtone file was missing; fixed, confirmed with a real call) |
 | Modem | Modem start and SIM | 🟢 Working | MSS + ADSP remoteproc, `rmtfs`, QMI DPM opens `DATA5_CNTL`, USIM session (`scripts/op2-modem-up.sh`) |
 | Modem | Mobile network (LTE) and operator name | 🟢 Working | registers on LTE; signal bars and operator in ztOS |
 | Modem | SMS | 🟢 Working | read from the SIM storage |
@@ -60,10 +68,10 @@ Latest milestone (2026-11-03): the hardware GPU renders the ztOS UI on mainline 
 | Sensors | Proximity | 🔴 Broken | returns a constant value even when covered (not understood yet) |
 | Sensors | Accelerometer, gyroscope, magnetometer | ⚪ Untested | the ADSP streams them (`op2-sensord watch`), not checked; no auto-rotation |
 | Sensors | Hall sensor | ⚪ Untested | `SW_MACHINE_COVER` on GPIO 75 |
-| Sensors | Fingerprint reader | ⚪ Untested |  |
-| Power | Battery and charging | 🟢 Working | `kernel/patches/0013` + APSD re-run |
+| Sensors | Fingerprint reader | 🟡 Partial | the FPC1150 answers from Linux over SPI (REE): finger detection and image capture (80x208) work; matching is not done yet |
+| Power | Battery and charging | 🟢 Working | charges to full (float 4.32 V, taper 150 mA as the stock firmware; the bootloader left 4.2 V / 250 mA, so charging used to stop at ~85 %); charger type detected on every plug-in; USB-C supplies without PD still count as 500 mA class unless the port reads as wall/CDP |
 | Power | Temperature and thermal throttling | 🟢 Working | 16 TSENS zones from the fuses; `op2-thermal.py` throttles the PLL post-dividers |
-| Power | Vibration | ⚪ Untested | PMI8994 haptic as an `FF_RUMBLE` input device, not felt by hand yet |
+| Power | Vibration | 🟢 Working | ERM motor through the PMI8994 haptic driver; strength tuned in the shell (pulse length and level) |
 | Power | Notification LED | 🟢 Working | PMI8994 LPG, red/green/blue |
 
 Full per-component state: [STATUS.md](STATUS.md). Day-by-day work with commands,

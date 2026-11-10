@@ -1,0 +1,364 @@
+--- a/drivers/power/supply/op2-battery.c
++++ b/drivers/power/supply/op2-battery.c
+@@ -33,6 +33,7 @@
+ #include <linux/platform_device.h>
+ #include <linux/power_supply.h>
+ #include <linux/regmap.h>
++#include <linux/workqueue.h>
+ 
+ #define CHGR_STS	0x100e
+ #define BAT_PRES	0x1208
+@@ -51,8 +52,35 @@
+ #define SRAM_BATT_TEMP	0x550
+ #define SRAM_OCV	0x588
+ #define SRAM_VOLTAGE_I	0x5cc
++/* Charger control registers (meanings from CAF qpnp-smbcharger.c):
++ *   MISC IDEV_STS 0x0808 bits 7:4 = APSD result (bit4 SDP, bit5 OTHER, bit6 DCP,
++ *                 bit7 CDP; qpnp-smbcharger.c:701,840-846,852-857,879-895)
++ *   USBIN CMD_IL 0x1340 (bit0 USBIN_MODE_CHG_BIT -> HC mode, qpnp-smbcharger.c:1735-1737),
++ *         IL_CFG 0x13f2 (sec): input current limit, index into usb_current_table
++ *         (qpnp-smbcharger.c:1347-1380,1730-1784)
++ *   CHGR  FCC_CFG 0x10f2 (sec): fast charge current, same table (qpnp-smbcharger.c:2040-2075)
++ *   USBIN CMD_APSD 0x1341 bit0 APSD_RERUN (qpnp-smbcharger.c:5510-5511,5653-5656) */
++#define MISC_IDEV_STS	0x0808
++#define CMD_IL		0x1340
++#define IL_CFG		0x13f2
++#define FCC_CFG		0x10f2
++#define CMD_APSD	0x1341
++#define USBIN_INPUT_MASK	0x1f
++#define USBIN_MODE_CHG_BIT	BIT(0)
++#define USBIN_HC_MODE		BIT(0)
++
++/* same table as CAF qpnp-smbcharger.c:1347-1380 (usb_current_table); the FCC
++ * enumerations are the same (qpnp-smbcharger.c:2049 "the fcc enumerations are
++ * the same as the usb currents") */
++static const int usb_current_table[] = {
++	300, 400, 450, 475, 500, 550, 600, 650, 700, 900,
++	950, 1000, 1100, 1200, 1400, 1450, 1500, 1600, 1800, 1850,
++	1880, 1910, 1930, 1950, 1970, 2000, 2050, 2100, 2300, 2400,
++	2500, 3000
++};
+ 
+ struct op2_bat {
++	struct device *dev;
+ 	struct regmap *map;
+ 	struct power_supply *psy;
+ 	struct power_supply *usb;
+@@ -62,6 +90,13 @@
+ 	unsigned long sram_ts, sram_fail_ts;
+ 	bool sram_valid;
+ 	int volt_uv, ocv_uv, cur_ua, temp_dc;
++	/* charger state */
++	int icl_ua, fcc_ua;
++	enum power_supply_type usb_psy_type;
++	enum power_supply_usb_type usb_type;
++	int apsd_idx;
++	struct delayed_work apsd_work;
++	struct delayed_work therm_work;
+ };
+ 
+ static int rd(struct op2_bat *b, unsigned int reg)
+@@ -71,6 +106,138 @@
+ 	return regmap_read(b->map, reg, &v) ? -EIO : v;
+ }
+ 
++static bool usb_present(struct op2_bat *b);
++static int sram_refresh(struct op2_bat *b);
++static struct power_supply_desc op2_usb_desc; /* defined below; type follows APSD */
++
++/* write a "sec" register: 0xa5 to the peripheral's SEC_ACCESS first (same as probe) */
++static int sec_write(struct op2_bat *b, unsigned int reg, unsigned int val)
++{
++	if (regmap_write(b->map, (reg & ~0xff) | SEC_ACCESS, 0xa5))
++		return -EIO;
++	return regmap_write(b->map, reg, val) ? -EIO : 0;
++}
++
++static int current_index(int ma)
++{
++	int i;
++
++	for (i = ARRAY_SIZE(usb_current_table) - 1; i >= 0; i--)
++		if (ma >= usb_current_table[i])
++			return i;
++	return 4; /* 500 mA fallback = FCC_500MA_VAL (qpnp-smbcharger.c:2041) */
++}
++
++/* input current limit (USBIN ICL): IL_CFG index, then CMD_IL HC mode
++ * (CAF sequence qpnp-smbcharger.c:1772-1782) */
++static int set_icl(struct op2_bat *b, int ma)
++{
++	int i = current_index(ma);
++
++	if (sec_write(b, IL_CFG, i & USBIN_INPUT_MASK))
++		return -EIO;
++	if (regmap_update_bits(b->map, CMD_IL, USBIN_MODE_CHG_BIT, USBIN_HC_MODE))
++		return -EIO;
++	b->icl_ua = usb_current_table[i] * 1000;
++	dev_info(b->dev, "ICL <- %d uA (IL_CFG %#x)\n", b->icl_ua, i & USBIN_INPUT_MASK);
++	return 0;
++}
++
++/* fast charge current (FCC): FCC_CFG index, same table (qpnp-smbcharger.c:2059-2075) */
++static int set_fcc(struct op2_bat *b, int ma)
++{
++	int i = current_index(ma);
++
++	if (sec_write(b, FCC_CFG, i & USBIN_INPUT_MASK))
++		return -EIO;
++	b->fcc_ua = usb_current_table[i] * 1000;
++	dev_info(b->dev, "FCC <- %d uA (FCC_CFG %#x)\n", b->fcc_ua, i & USBIN_INPUT_MASK);
++	return 0;
++}
++
++/* Read the APSD result (MISC IDEV_STS bits 7:4, CAF get_type qpnp-smbcharger.c:852-857)
++ * and raise the input current limit only for DCP/CDP. SDP/OTHER/NONE keep the
++ * DT/LK values (500 mA class) — CAF does the same (DEFAULT_SDP_MA 500,
++ * qpnp-smbcharger.c:4283-4287, and the SDP branch of smbchg_set_usb_current_max
++ * only allows 100/150/500/900 mA, qpnp-smbcharger.c:1820-1895). */
++static void op2_apsd_work(struct work_struct *w)
++{
++	struct op2_bat *b = container_of(to_delayed_work(w), struct op2_bat, apsd_work);
++	unsigned long t;
++	int v, idx;
++
++	if (!usb_present(b))
++		goto rearm;
++	v = rd(b, MISC_IDEV_STS);
++	if (v < 0)
++		goto rearm;
++	t = (v >> 4) & 0xf;
++	idx = find_first_bit(&t, 4); /* 4 = none of the type bits set */
++	if (idx != b->apsd_idx) {
++		b->apsd_idx = idx;
++		switch (idx) {
++		case 0:
++			b->usb_type = POWER_SUPPLY_USB_TYPE_SDP;
++			b->usb_psy_type = POWER_SUPPLY_TYPE_USB;
++			break;
++		case 2:
++			b->usb_type = POWER_SUPPLY_USB_TYPE_DCP;
++			b->usb_psy_type = POWER_SUPPLY_TYPE_USB_DCP;
++			break;
++		case 3:
++			b->usb_type = POWER_SUPPLY_USB_TYPE_CDP;
++			b->usb_psy_type = POWER_SUPPLY_TYPE_USB_CDP;
++			break;
++		default:
++			b->usb_type = POWER_SUPPLY_USB_TYPE_UNKNOWN;
++			b->usb_psy_type = POWER_SUPPLY_TYPE_USB;
++			break;
++		}
++		dev_info(b->dev, "APSD IDEV_STS %#04x -> idx %d (usb_type %d)\n", v, idx, b->usb_type);
++		op2_usb_desc.type = b->usb_psy_type; /* sysfs "type" now follows APSD */
++		/* DCP: CAF DEFAULT_WALL_CHG_MA 1800 (qpnp-smbcharger.c:4280); CDP: DEFAULT_CDP_MA
++		 * 1500 (:4287). FCC capped at 2000 mA: the OP2 stock 5 V/2 A adapter draws
++		 * ~1.9 A into the 3300 mAh battery (0.6 C), see report task 420. */
++		if (idx == 2) {
++			set_icl(b, 1800);
++			set_fcc(b, 2000);
++		} else if (idx == 3) {
++			set_icl(b, 1500);
++			set_fcc(b, 1500);
++		}
++		/* SDP/other: nothing — ICL/FCC stay at the oneplus,init-regs values */
++		power_supply_changed(b->usb);
++		power_supply_changed(b->psy);
++	}
++rearm:
++	schedule_delayed_work(&b->apsd_work, 30 * HZ);
++}
++
++/* temperature guard while charging: derate FCC, restore when cool (FG SRAM temp) */
++static void op2_therm_work(struct work_struct *w)
++{
++	struct op2_bat *b = container_of(to_delayed_work(w), struct op2_bat, therm_work);
++	int target;
++
++	if (usb_present(b) && sram_refresh(b) == 0 && b->fcc_ua > 0) {
++		if (b->temp_dc > 480)
++			target = 300;
++		else if (b->temp_dc > 450)
++			target = 1000;
++		else if (b->usb_psy_type == POWER_SUPPLY_TYPE_USB_DCP)
++			target = 2000;
++		else if (b->usb_psy_type == POWER_SUPPLY_TYPE_USB_CDP)
++			target = 1500;
++		else
++			target = 500;
++		if (target != b->fcc_ua / 1000)
++			set_fcc(b, target);
++		if (b->temp_dc > 450)
++			dev_info(b->dev, "batt temp %d dC, FCC derated to %d\n", b->temp_dc, target);
++	}
++	schedule_delayed_work(&b->therm_work, 30 * HZ);
++}
++
+ /* One 16-bit value at word address `addr`, byte offset 0..3: at offset 3 the high byte is byte 0 of the
+  * next word (CAF qpnp-fg.c fg_mem_read() sets the address again for the next word). Access already granted. */
+ static int sram_word16(struct op2_bat *b, unsigned int addr, unsigned int off)
+@@ -170,22 +337,63 @@
+ 	case POWER_SUPPLY_PROP_ONLINE:
+ 		val->intval = usb_present(b);
+ 		break;
++	case POWER_SUPPLY_PROP_USB_TYPE:
++		val->intval = b->usb_type;
++		break;
++	case POWER_SUPPLY_PROP_CURRENT_MAX:
++	case POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT:
++		val->intval = b->icl_ua;
++		break;
+ 	default:
+ 		return -EINVAL;
+ 	}
+ 	return 0;
+ }
+ 
++/* userspace may set the input current limit; it is applied to the register only
++ * for DCP/CDP (see op2_apsd_work) and capped at 1800 mA, SDP stays <= 500 mA */
++static int op2_usb_set(struct power_supply *psy, enum power_supply_property p,
++		       const union power_supply_propval *val)
++{
++	struct op2_bat *b = power_supply_get_drvdata(psy);
++
++	switch (p) {
++	case POWER_SUPPLY_PROP_CURRENT_MAX:
++	case POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT:
++		if (b->usb_psy_type == POWER_SUPPLY_TYPE_USB_DCP ||
++		    b->usb_psy_type == POWER_SUPPLY_TYPE_USB_CDP)
++			set_icl(b, min(val->intval / 1000, 1800));
++		else
++			b->icl_ua = min(val->intval, 500000);
++		power_supply_changed(b->usb);
++		return 0;
++	default:
++		return -EINVAL;
++	}
++}
++
++static int op2_usb_is_writeable(struct power_supply *psy,
++				enum power_supply_property p)
++{
++	return p == POWER_SUPPLY_PROP_CURRENT_MAX ||
++	       p == POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT;
++}
++
+ static const enum power_supply_property op2_usb_props[] = {
+ 	POWER_SUPPLY_PROP_ONLINE,
++	POWER_SUPPLY_PROP_USB_TYPE,
++	POWER_SUPPLY_PROP_CURRENT_MAX,
++	POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT,
+ };
+ 
+-static const struct power_supply_desc op2_usb_desc = {
++static struct power_supply_desc op2_usb_desc = {
+ 	.name = "usb",
+ 	.type = POWER_SUPPLY_TYPE_USB,
+ 	.properties = op2_usb_props,
+ 	.num_properties = ARRAY_SIZE(op2_usb_props),
+ 	.get_property = op2_usb_get,
++	.set_property = op2_usb_set,
++	.property_is_writeable = op2_usb_is_writeable,
+ };
+ 
+ static int op2_bat_get(struct power_supply *psy, enum power_supply_property p,
+@@ -290,12 +498,38 @@
+ 	case POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN:
+ 		val->intval = b->design_uah;
+ 		break;
++	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX:
++		val->intval = b->fcc_ua;
++		break;
+ 	default:
+ 		return -EINVAL;
+ 	}
+ 	return 0;
+ }
+ 
++/* fast charge current from userspace: clamped to 300..2000 mA (0.6 C max on the
++ * 3300 mAh cell; the taper is done in hardware by I_TERM/CHG_TCC) */
++static int op2_bat_set(struct power_supply *psy, enum power_supply_property p,
++		       const union power_supply_propval *val)
++{
++	struct op2_bat *b = power_supply_get_drvdata(psy);
++
++	switch (p) {
++	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX:
++		set_fcc(b, clamp(val->intval / 1000, 300, 2000));
++		power_supply_changed(b->psy);
++		return 0;
++	default:
++		return -EINVAL;
++	}
++}
++
++static int op2_bat_is_writeable(struct power_supply *psy,
++				enum power_supply_property p)
++{
++	return p == POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX;
++}
++
+ static const enum power_supply_property op2_bat_props[] = {
+ 	POWER_SUPPLY_PROP_STATUS,
+ 	POWER_SUPPLY_PROP_PRESENT,
+@@ -308,6 +542,7 @@
+ 	POWER_SUPPLY_PROP_CURRENT_NOW,
+ 	POWER_SUPPLY_PROP_TEMP,
+ 	POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN,
++	POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX,
+ };
+ 
+ static const struct power_supply_desc op2_bat_desc = {
+@@ -316,6 +551,8 @@
+ 	.properties = op2_bat_props,
+ 	.num_properties = ARRAY_SIZE(op2_bat_props),
+ 	.get_property = op2_bat_get,
++	.set_property = op2_bat_set,
++	.property_is_writeable = op2_bat_is_writeable,
+ };
+ 
+ static int op2_bat_probe(struct platform_device *pdev)
+@@ -329,12 +566,16 @@
+ 	b = devm_kzalloc(dev, sizeof(*b), GFP_KERNEL);
+ 	if (!b)
+ 		return -ENOMEM;
++	b->dev = dev;
+ 	mutex_init(&b->sram_lock);
+ 	b->design_uah = 3300000;
+ 	of_property_read_u32(dev->of_node, "charge-full-design-microamp-hours", &b->design_uah);
+ 	b->map = dev_get_regmap(dev->parent, NULL);
+ 	if (!b->map)
+ 		return dev_err_probe(dev, -ENODEV, "no PMIC regmap\n");
++	b->usb_type = POWER_SUPPLY_USB_TYPE_UNKNOWN;
++	b->usb_psy_type = POWER_SUPPLY_TYPE_USB;
++	b->apsd_idx = -1;
+ 
+ 	n = of_property_count_u32_elems(dev->of_node, "oneplus,init-regs");
+ 	if (n > 0 && n % 3 == 0) {
+@@ -360,8 +601,24 @@
+ 	b->usb = devm_power_supply_register(dev, &op2_usb_desc, &cfg);
+ 	if (IS_ERR(b->usb))
+ 		return PTR_ERR(b->usb);
+-	dev_info(dev, "battery %d%%, CHGR_STS %#x\n",
+-		 DIV_ROUND_CLOSEST(rd(b, FG_SOC) * 100, 255), rd(b, CHGR_STS));
++	/* current limits as left by oneplus,init-regs (DT) */
++	{
++		int il = rd(b, IL_CFG), fc = rd(b, FCC_CFG);
++
++		if (il >= 0 && (il & USBIN_INPUT_MASK) < ARRAY_SIZE(usb_current_table))
++			b->icl_ua = usb_current_table[il & USBIN_INPUT_MASK] * 1000;
++		if (fc >= 0 && (fc & USBIN_INPUT_MASK) < ARRAY_SIZE(usb_current_table))
++			b->fcc_ua = usb_current_table[fc & USBIN_INPUT_MASK] * 1000;
++	}
++	dev_info(dev, "battery %d%%, CHGR_STS %#x, IL_CFG %#x (ICL %d uA), FCC_CFG %#x (FCC %d uA)\n",
++		 DIV_ROUND_CLOSEST(rd(b, FG_SOC) * 100, 255), rd(b, CHGR_STS),
++		 rd(b, IL_CFG), b->icl_ua, rd(b, FCC_CFG), b->fcc_ua);
++	/* the DT already re-runs APSD (0x1341 0x01): read the result after it completes
++	 * and raise ICL/FCC only for DCP/CDP; then keep a temperature guard alive */
++	INIT_DELAYED_WORK(&b->apsd_work, op2_apsd_work);
++	INIT_DELAYED_WORK(&b->therm_work, op2_therm_work);
++	schedule_delayed_work(&b->apsd_work, 3 * HZ);
++	schedule_delayed_work(&b->therm_work, 30 * HZ);
+ 	return 0;
+ }
+ 

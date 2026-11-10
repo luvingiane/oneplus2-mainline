@@ -14,7 +14,7 @@
  * suspends the machine on SW_LID. What the sensor really detects (flip cover
  * magnet, StyleSwap cover?) is unverified.
  */
-#if defined(OP2_SENSORS_L18) || defined(OP2_FPCTZ)
+#if defined(OP2_SENSORS_L18) || defined(OP2_FPCTZ) || defined(OP2_FPC)
 &rpm_requests {
 	regulators-0 {
 		pm8994_l18: l18 {

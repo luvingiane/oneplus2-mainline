@@ -1,0 +1,129 @@
+--- a/drivers/media/platform/qcom/camss/camss-csiphy-2ph-1-0.c
++++ b/drivers/media/platform/qcom/camss/camss-csiphy-2ph-1-0.c
+@@ -9,6 +9,7 @@
+  */
+ 
+ #include "camss-csiphy.h"
++#include "camss.h"	/* DEBUG task 439: struct camss completa per dev_info */
+ 
+ #include <linux/delay.h>
+ #include <linux/interrupt.h>
+@@ -171,6 +172,37 @@
+ 			       CAMSS_CSI_PHY_LNn_TEST_IMP(i));
+ 		curr_lane++;
+ 	}
++
++	/* DEBUG read-only: read back lane/global regs (task 439) */
++	{
++		struct device *dev = csiphy->camss->dev;
++		int j;
++
++		dev_info(dev, "csiphy%u lanes_enable: link_freq=%lld settle_cnt=0x%02x lane_mask=0x%02x\n",
++			 csiphy->id, link_freq, settle_cnt, lane_mask);
++		dev_info(dev, "csiphy%u PWR_CFG(0x144)=0x%02x RESET(0x140)=0x%02x T_INIT(0x1ec)=0x%02x WAKEUP(0x1f4)=0x%02x\n",
++			 csiphy->id,
++			 readl_relaxed(csiphy->base + CAMSS_CSI_PHY_GLBL_PWR_CFG),
++			 readl_relaxed(csiphy->base + CAMSS_CSI_PHY_GLBL_RESET),
++			 readl_relaxed(csiphy->base + CAMSS_CSI_PHY_GLBL_T_INIT_CFG0),
++			 readl_relaxed(csiphy->base + CAMSS_CSI_PHY_T_WAKEUP_CFG0));
++		for (j = 0; j < 5; j++) {
++			if (!(lane_mask & (1 << j)))
++				continue;
++			dev_info(dev, "csiphy%u lane%u: CFG2(0x%03x)=0x%02x CFG3(0x%03x)=0x%02x MISC1(0x%03x)=0x%02x TEST_IMP(0x%03x)=0x%02x STATUS(0x%03x)=0x%02x\n",
++				 csiphy->id, j,
++				 0x004 + 0x40 * j,
++				 readl_relaxed(csiphy->base + CAMSS_CSI_PHY_LNn_CFG2(j)),
++				 0x008 + 0x40 * j,
++				 readl_relaxed(csiphy->base + CAMSS_CSI_PHY_LNn_CFG3(j)),
++				 0x028 + 0x40 * j,
++				 readl_relaxed(csiphy->base + CAMSS_CSI_PHY_LNn_MISC1(j)),
++				 0x01c + 0x40 * j,
++				 readl_relaxed(csiphy->base + CAMSS_CSI_PHY_LNn_TEST_IMP(j)),
++				 0x18c + 0x4 * j,
++				 readl_relaxed(csiphy->base + CAMSS_CSI_PHY_INTERRUPT_STATUSn(j)));
++		}
++	}
+ }
+ 
+ static void csiphy_lanes_disable(struct csiphy_device *csiphy,
+@@ -212,6 +244,11 @@
+ 	for (i = 0; i < 8; i++) {
+ 		u8 val = readl_relaxed(csiphy->base +
+ 				       CAMSS_CSI_PHY_INTERRUPT_STATUSn(i));
++		/* DEBUG read-only (task 439): log per-lane interrupt status */
++		if (val)
++			dev_info(csiphy->camss->dev,
++				 "csiphy%u INTERRUPT_STATUS%u (0x%03x) = 0x%02x\n",
++				 csiphy->id, i, 0x18c + 0x4 * i, val);
+ 		writel_relaxed(val, csiphy->base +
+ 			       CAMSS_CSI_PHY_INTERRUPT_CLEARn(i));
+ 		writel_relaxed(0x1, csiphy->base + CAMSS_CSI_PHY_GLBL_IRQ_CMD);
+--- a/drivers/media/platform/qcom/camss/camss-csid-4-1.c
++++ b/drivers/media/platform/qcom/camss/camss-csid-4-1.c
+@@ -44,6 +44,47 @@
+ #define CAMSS_CSID_TG_DT_n_CGG_1(n)	(0x0b0 + 0xc * (n))
+ #define CAMSS_CSID_TG_DT_n_CGG_2(n)	(0x0b4 + 0xc * (n))
+ 
++/* DEBUG read-only (task 439): CAF msm_csid_3_1_hwreg.h csid_v3_1 offsets */
++#define CAMSS_CSID_CAPTURED_UNMAPPED_LONG_PKT_HDR	0x06c
++#define CAMSS_CSID_CAPTURED_MAPPED_LONG_PKT_HDR	0x070
++#define CAMSS_CSID_CAPTURED_SHORT_PKT			0x074
++#define CAMSS_CSID_CAPTURED_LONG_PKT_HDR		0x078
++#define CAMSS_CSID_CAPTURED_LONG_PKT_FTR		0x07c
++#define CAMSS_CSID_PIF_MISR_DL0				0x080
++#define CAMSS_CSID_PIF_MISR_DL1				0x084
++#define CAMSS_CSID_PIF_MISR_DL2				0x088
++#define CAMSS_CSID_PIF_MISR_DL3				0x08c
++#define CAMSS_CSID_STATS_TOTAL_PKTS_RCVD		0x090
++#define CAMSS_CSID_STATS_ECC				0x094
++#define CAMSS_CSID_STATS_CRC				0x098
++
++static void csid_debug_dump(struct csid_device *csid)
++{
++	struct device *dev = csid->camss->dev;
++
++	dev_info(dev, "csid%u IRQ_STATUS(0x068)=0x%08x CORE_CTRL_0(0x004)=0x%08x CORE_CTRL_1(0x008)=0x%08x\n",
++		 csid->id,
++		 readl_relaxed(csid->base + CAMSS_CSID_IRQ_STATUS),
++		 readl_relaxed(csid->base + CAMSS_CSID_CORE_CTRL_0),
++		 readl_relaxed(csid->base + CAMSS_CSID_CORE_CTRL_1));
++	dev_info(dev, "csid%u captured: unmapped_long_hdr(0x6c)=0x%08x mapped_long_hdr(0x70)=0x%08x short_pkt(0x74)=0x%08x long_hdr(0x78)=0x%08x long_ftr(0x7c)=0x%08x\n",
++		 csid->id,
++		 readl_relaxed(csid->base + CAMSS_CSID_CAPTURED_UNMAPPED_LONG_PKT_HDR),
++		 readl_relaxed(csid->base + CAMSS_CSID_CAPTURED_MAPPED_LONG_PKT_HDR),
++		 readl_relaxed(csid->base + CAMSS_CSID_CAPTURED_SHORT_PKT),
++		 readl_relaxed(csid->base + CAMSS_CSID_CAPTURED_LONG_PKT_HDR),
++		 readl_relaxed(csid->base + CAMSS_CSID_CAPTURED_LONG_PKT_FTR));
++	dev_info(dev, "csid%u stats: total_pkts(0x90)=%u ecc(0x94)=%u crc(0x98)=%u misr_dl0..3(0x80..0x8c)=0x%08x 0x%08x 0x%08x 0x%08x\n",
++		 csid->id,
++		 readl_relaxed(csid->base + CAMSS_CSID_STATS_TOTAL_PKTS_RCVD),
++		 readl_relaxed(csid->base + CAMSS_CSID_STATS_ECC),
++		 readl_relaxed(csid->base + CAMSS_CSID_STATS_CRC),
++		 readl_relaxed(csid->base + CAMSS_CSID_PIF_MISR_DL0),
++		 readl_relaxed(csid->base + CAMSS_CSID_PIF_MISR_DL1),
++		 readl_relaxed(csid->base + CAMSS_CSID_PIF_MISR_DL2),
++		 readl_relaxed(csid->base + CAMSS_CSID_PIF_MISR_DL3));
++}
++
+ static void csid_configure_stream(struct csid_device *csid, u8 enable)
+ {
+ 	struct csid_testgen_config *tg = &csid->testgen;
+@@ -128,6 +169,8 @@
+ 			val = CAMSS_CSID_TG_CTRL_ENABLE;
+ 			writel_relaxed(val, csid->base + CAMSS_CSID_TG_CTRL);
+ 		}
++		/* DEBUG read-only (task 439): dump config at stream on */
++		csid_debug_dump(csid);
+ 	} else {
+ 		if (tg->enabled) {
+ 			val = CAMSS_CSID_TG_CTRL_DISABLE;
+@@ -150,6 +193,9 @@
+ 	u32 value;
+ 
+ 	value = readl_relaxed(csid->base + CAMSS_CSID_IRQ_STATUS);
++	/* DEBUG read-only (task 439) */
++	if (value)
++		csid_debug_dump(csid);
+ 	writel_relaxed(value, csid->base + CAMSS_CSID_IRQ_CLEAR_CMD);
+ 
+ 	if ((value >> 11) & 0x1)

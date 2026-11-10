@@ -1,0 +1,61 @@
+--- a/arch/arm64/boot/dts/qcom/msm8994.dtsi
++++ b/arch/arm64/boot/dts/qcom/msm8994.dtsi
+@@ -1121,3 +1121,58 @@
+ 
+ 
+ #include "op2-a57.dtsi"
++
++/* OnePlus 2 only (OP2_FPC, task 396): BLSP2 QUP6 SPI controller used by the
++ * FPC fingerprint sensor — stock spi@f9968000 (research/stock-dtb/stock-0.dtb
++ * line 4999) / spi_12 in lineage msm8994.dtsi:1527. Disabled by default. */
++&soc {
++	blsp2_spi6: spi@f9968000 {
++		compatible = "qcom,spi-qup-v2.2.1";
++		reg = <0xf9968000 0x500>;
++		interrupts = <GIC_SPI 106 IRQ_TYPE_LEVEL_HIGH>;
++		clocks = <&gcc GCC_BLSP2_QUP6_SPI_APPS_CLK>,
++			 <&gcc GCC_BLSP2_AHB_CLK>;
++		clock-names = "core", "iface";
++		#address-cells = <1>;
++		#size-cells = <0>;
++		status = "disabled";
++	};
++};
++
++&tlmm {
++	/* stock fpc_spi_active: gpio85/86/88 func 1 = blsp_spi12
++	 * (lineage msm8994-pinctrl.dtsi:281-291; mainline PINGROUP 85-88
++	 * blsp_spi12 at pinctrl-msm8994.c:1225-1231) */
++	fpc_spi_default: fpc-spi-default-state {
++		pins = "gpio85", "gpio86", "gpio88";
++		function = "blsp_spi12";
++		drive-strength = <12>;
++		bias-disable;
++	};
++
++	fpc_cs_default: fpc-cs-default-state {
++		pins = "gpio87";
++		function = "gpio";
++		drive-strength = <2>;
++		bias-disable;
++		output-high;
++	};
++
++	fpc_spi_sleep: fpc-spi-sleep-state {
++		pins = "gpio85", "gpio86", "gpio88";
++		function = "gpio";
++		drive-strength = <2>;
++		bias-disable;
++	};
++
++	/* stock fpc_irq_active (lineage msm8994-pinctrl.dtsi:365-375):
++	 * gpio90 func gpio, drive 2 mA, input enabled, no pull */
++	fpc_irq_default: fpc-irq-default-state {
++		pins = "gpio90";
++		function = "gpio";
++		drive-strength = <2>;
++		bias-disable;
++	};
++};
++
++#include "op2-fpc.dtsi"

@@ -52,7 +52,8 @@
 
 &blsp2_uart2 {
 	status = "okay";
-	/* as the I2C buses: no BAM DMA for now */
+	/* as the I2C buses: no BAM DMA for now (10/11, task 441-01: restoring dmas does nothing here, the
+	 * blsp2 BAM controller fails to probe with -22 and msm_serial stays in PIO) */
 	/delete-property/ dmas;
 	/delete-property/ dma-names;
 

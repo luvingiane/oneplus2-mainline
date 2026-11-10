@@ -1,0 +1,31 @@
+#!/bin/sh
+# OnePlus 2: make sure ztphone has a ringtone file to play. ztmetro/phone/ztphone.c
+# runs `pw-play /usr/local/share/sounds/ztos/phone/<name>` (default Nokia-Tune.wav)
+# on an incoming call and returns SILENTLY when the file is missing: a rootfs
+# built without prebuilts/ztos-media has no phone/ sounds at all (the 25/10
+# build of this phone predated the media pack). If the media pack is on the
+# phone take the real file from it, otherwise write a small two-tone ring
+# (same shape as the fallback built into ztphone.c).
+set -eu
+DIR=/usr/local/share/sounds/ztos/phone
+DEFAULT="$DIR/Nokia-Tune.wav"
+mkdir -p "$DIR"
+[ -r "$DEFAULT" ] && exit 0
+for base in /usr/local/share/ztos /usr/lib/ztos /root; do
+	if ls "$base"/ztos-media.tar.xz.part* >/dev/null 2>&1; then
+		cat "$base"/ztos-media.tar.xz.part* | tar -xJf - --strip-components=6 \
+			-C "$DIR" usr/local/share/sounds/ztos/phone/Nokia-Tune.wav 2>/dev/null && exit 0
+	fi
+done
+python3 - "$DEFAULT" <<'PYEOF'
+import math, struct, sys, wave
+w = wave.open(sys.argv[1], 'w')
+w.setnchannels(1); w.setsampwidth(2); w.setframerate(48000)
+seg = 48000 * 2 // 5
+out = bytearray()
+for i in range(48000 * 2):
+    f = 480.0 if (i // seg) & 1 else 440.0
+    out += struct.pack('<h', int(0.3 * 32767 * math.sin(2 * math.pi * f * i / 48000)))
+w.writeframes(bytes(out)); w.close()
+PYEOF
+echo "op2-ensure-ringtone: wrote $DEFAULT"

@@ -1,0 +1,52 @@
+#!/usr/bin/python3
+"""op2-batreport [csv] [hours]: summary of /var/log/op2-battery.csv (default last 24 h): charge sessions, discharge
+segments (drain %/h, screen on share, mean current), where charging stopped, temperature, reboots (gaps)."""
+import csv, sys, time
+
+path = sys.argv[1] if len(sys.argv) > 1 else "/var/log/op2-battery.csv"
+hours = float(sys.argv[2]) if len(sys.argv) > 2 else 24
+now = time.time()
+rows = []
+for r in csv.DictReader(open(path)):
+    try:
+        t = time.mktime(time.strptime(r["time"], "%Y-%m-%dT%H:%M:%S"))
+        if t < now - hours * 3600:
+            continue
+        r["t"] = t
+        r["cap"] = int(r["cap"]); r["v"] = int(r["voltage_uv"] or 0) / 1e6; r["i"] = int(r["current_ua"] or 0) / 1000
+        r["T"] = int(r["temp_dc"] or 0) / 10
+        rows.append(r)
+    except (ValueError, KeyError):
+        pass
+if len(rows) < 2:
+    sys.exit("not enough data")
+print(f"# Battery report: {rows[0]['time']} -> {rows[-1]['time']} ({len(rows)} samples)\n")
+gaps = [(a, b) for a, b in zip(rows, rows[1:]) if b["t"] - a["t"] > 120]
+print("Gaps > 2 min (reboot, off, or logger down):", ", ".join(f"{a['time'][11:16]}-{b['time'][11:16]}" for a, b in gaps) or "none")
+segs, cur = [], [rows[0]]
+for r in rows[1:]:
+    if (r["usb_online"] == "1") != (cur[-1]["usb_online"] == "1") or r["t"] - cur[-1]["t"] > 300:
+        segs.append(cur); cur = [r]
+    else:
+        cur.append(r)
+segs.append(cur)
+print("\n## Segments\n")
+print("| from | to | h | kind | cap | V end | mean mA | max T | screen on | status at end | usb/ICL/FCC |")
+print("|---|---|---|---|---|---|---|---|---|---|---|")
+for s in segs:
+    a, b = s[0], s[-1]
+    dur = (b["t"] - a["t"]) / 3600
+    if dur < 0.05:
+        continue
+    chg = a["usb_online"] == "1"
+    scr = [x["screen"] for x in s if x["screen"] != ""]
+    scr_share = f"{100 * scr.count('1') // len(scr)}%" if scr else "?"
+    mean = sum(abs(x["i"]) for x in s) / len(s)
+    print(f"| {a['time'][5:16]} | {b['time'][5:16]} | {dur:.1f} | {'CHARGE' if chg else 'battery'} | {a['cap']}->{b['cap']}% | "
+          f"{b['v']:.2f} | {mean:.0f} | {max(x['T'] for x in s):.1f} | {scr_share} | {b['status']} | {b['usb_type']}/{b['icl_ua']}/{b['fcc_ua']} |")
+    if not chg and dur > 0.3 and a["cap"] != b["cap"]:
+        print(f"|  |  |  | drain | {(a['cap'] - b['cap']) / dur:.1f} %/h |  |  |  |  |  |  |")
+    if chg and b["status"] == "Full" and b["cap"] < 98:
+        print(f"|  |  |  | WARN | stopped at {b['cap']}% with {b['v']:.3f} V (Full below 98%) |  |  |  |  |  |  |")
+print("\nHottest sample:", max(rows, key=lambda x: x["T"])["time"], f"{max(x['T'] for x in rows):.1f} C;",
+      "lowest cap:", min(x["cap"] for x in rows), "%; highest V:", f"{max(x['v'] for x in rows):.3f}")

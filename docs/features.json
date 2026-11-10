@@ -30,9 +30,9 @@
     {
       "category": "Boot",
       "feature": "CPU, 4 × A57",
-      "status": "broken",
-      "en": "they come up with a real clock but the boot becomes intermittent (3 of 4 starts); left off",
-      "it": "si accendono con clock vero ma l'avvio diventa intermittente (3 su 4); lasciati spenti"
+      "status": "partial",
+      "en": "powered up and stable under full load at a fixed 600 MHz (8 cores, with the display and GPU on); a higher clock via the cluster PLL crashes the boot together with the GPU (cause being researched); kept off by default because 8 cores run hot",
+      "it": "accesi e stabili a pieno carico a 600 MHz fissi (8 core, con display e GPU attivi); un clock più alto tramite la PLL del cluster blocca il boot insieme alla GPU (causa in ricerca); spenti di default perché 8 core scaldano molto"
     },
     {
       "category": "Boot",
@@ -72,9 +72,9 @@
     {
       "category": "Input",
       "feature": "Capacitive touch keys",
-      "status": "partial",
-      "en": "events arrive and the left key acts as Home; the other key is not checked",
-      "it": "gli eventi arrivano e il tasto di sinistra fa da Home; l'altro non è stato controllato"
+      "status": "working",
+      "en": "back and recents (search) keys work; the home key is the fingerprint pad, read over SPI by the op2-fpcd daemon (KEY_HOMEPAGE through uinput)",
+      "it": "i tasti indietro e recenti (cerca) funzionano; il tasto home è il pad dell'impronta, letto via SPI dal demone op2-fpcd (KEY_HOMEPAGE tramite uinput)"
     },
     {
       "category": "Input",
@@ -107,9 +107,9 @@
     {
       "category": "Audio",
       "feature": "Ringtone",
-      "status": "broken",
-      "en": "the phone does not ring on an incoming call (the caller does hear ringing); cause not found yet",
-      "it": "il telefono non suona alla chiamata in arrivo (chi chiama sente lo squillo); causa non ancora trovata"
+      "status": "working",
+      "en": "the phone rings on an incoming call (the ringtone file was missing; fixed, confirmed with a real call)",
+      "it": "il telefono suona alla chiamata in arrivo (mancava il file della suoneria; risolto, confermato con una chiamata vera)"
     },
     {
       "category": "Modem",
@@ -240,16 +240,16 @@
     {
       "category": "Sensors",
       "feature": "Fingerprint reader",
-      "status": "untested",
-      "en": "",
-      "it": ""
+      "status": "partial",
+      "en": "the FPC1150 answers from Linux over SPI (REE): finger detection and image capture (80x208) work; matching is not done yet",
+      "it": "l'FPC1150 risponde da Linux via SPI (REE): rilevamento del dito e cattura dell'immagine (80x208) funzionano; il riconoscimento non è ancora fatto"
     },
     {
       "category": "Power",
       "feature": "Battery and charging",
       "status": "working",
-      "en": "`kernel/patches/0013` + APSD re-run",
-      "it": "`kernel/patches/0013` + riesecuzione APSD"
+      "en": "charges to full (float 4.32 V, taper 150 mA as the stock firmware; the bootloader left 4.2 V / 250 mA, so charging used to stop at ~85 %); charger type detected on every plug-in; USB-C supplies without PD still count as 500 mA class unless the port reads as wall/CDP",
+      "it": "si carica fino in fondo (tensione massima 4,32 V e fine carica 150 mA come il firmware originale; il bootloader lascia 4,2 V / 250 mA e la carica si fermava all'85%); il tipo di caricatore viene letto a ogni collegamento"
     },
     {
       "category": "Power",
@@ -261,9 +261,9 @@
     {
       "category": "Power",
       "feature": "Vibration",
-      "status": "untested",
-      "en": "PMI8994 haptic as an `FF_RUMBLE` input device, not felt by hand yet",
-      "it": "haptic PMI8994 come dispositivo `FF_RUMBLE`, non ancora sentito a mano"
+      "status": "working",
+      "en": "ERM motor through the PMI8994 haptic driver; strength tuned in the shell (pulse length and level)",
+      "it": "motore ERM tramite il driver haptic del PMI8994; intensità tarata nella shell (durata e livello degli impulsi)"
     },
     {
       "category": "Power",

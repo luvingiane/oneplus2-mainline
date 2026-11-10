@@ -1,0 +1,81 @@
+--- a/drivers/power/supply/op2-battery.c
++++ b/drivers/power/supply/op2-battery.c
+@@ -95,6 +95,8 @@
+ 	enum power_supply_type usb_psy_type;
+ 	enum power_supply_usb_type usb_type;
+ 	int apsd_idx;
++	bool usb_was_present;	/* cable seen at the last poll */
++	bool apsd_pending;	/* APSD re-run requested: read the result on the next poll */
+ 	struct delayed_work apsd_work;
+ 	struct delayed_work therm_work;
+ };
+@@ -166,8 +168,33 @@
+ 	unsigned long t;
+ 	int v, idx;
+ 
+-	if (!usb_present(b))
++	if (!usb_present(b)) {
++		/* cable out: forget the type, the next insertion is detected again */
++		if (b->usb_was_present) {
++			b->usb_was_present = false;
++			b->apsd_idx = -1;
++			b->usb_type = POWER_SUPPLY_USB_TYPE_UNKNOWN;
++			b->usb_psy_type = POWER_SUPPLY_TYPE_USB;
++			op2_usb_desc.type = b->usb_psy_type;
++			set_icl(b, 650);
++			set_fcc(b, 500);
++			power_supply_changed(b->usb);
++		}
+ 		goto rearm;
++	}
++	if (!b->usb_was_present) {
++		/* cable just in: the APSD result in IDEV_STS is stale until the detection runs again
++		 * (CAF does it on every insertion, qpnp-smbcharger.c:5653-5656); read it next poll */
++		b->usb_was_present = true;
++		b->apsd_idx = -1;
++		regmap_write(b->map, CMD_APSD, 1);
++		b->apsd_pending = true;
++		goto rearm;
++	}
++	if (b->apsd_pending) {
++		b->apsd_pending = false;
++		msleep(500);	/* the detection takes a few hundred ms */
++	}
+ 	v = rd(b, MISC_IDEV_STS);
+ 	if (v < 0)
+ 		goto rearm;
+@@ -180,6 +207,7 @@
+ 			b->usb_type = POWER_SUPPLY_USB_TYPE_SDP;
+ 			b->usb_psy_type = POWER_SUPPLY_TYPE_USB;
+ 			break;
++		case 1: /* OTHER: CAF usb_type_enum maps it to DCP (qpnp-smbcharger.c:865-871) */
+ 		case 2:
+ 			b->usb_type = POWER_SUPPLY_USB_TYPE_DCP;
+ 			b->usb_psy_type = POWER_SUPPLY_TYPE_USB_DCP;
+@@ -198,7 +226,7 @@
+ 		/* DCP: CAF DEFAULT_WALL_CHG_MA 1800 (qpnp-smbcharger.c:4280); CDP: DEFAULT_CDP_MA
+ 		 * 1500 (:4287). FCC capped at 2000 mA: the OP2 stock 5 V/2 A adapter draws
+ 		 * ~1.9 A into the 3300 mAh battery (0.6 C), see report task 420. */
+-		if (idx == 2) {
++		if (idx == 1 || idx == 2) {
+ 			set_icl(b, 1800);
+ 			set_fcc(b, 2000);
+ 		} else if (idx == 3) {
+@@ -210,7 +238,7 @@
+ 		power_supply_changed(b->psy);
+ 	}
+ rearm:
+-	schedule_delayed_work(&b->apsd_work, 30 * HZ);
++	schedule_delayed_work(&b->apsd_work, 2 * HZ);
+ }
+ 
+ /* temperature guard while charging: derate FCC, restore when cool (FG SRAM temp) */
+@@ -388,6 +416,8 @@
+ 
+ static struct power_supply_desc op2_usb_desc = {
+ 	.name = "usb",
++	.usb_types = BIT(POWER_SUPPLY_USB_TYPE_UNKNOWN) | BIT(POWER_SUPPLY_USB_TYPE_SDP) |
++		     BIT(POWER_SUPPLY_USB_TYPE_DCP) | BIT(POWER_SUPPLY_USB_TYPE_CDP),
+ 	.type = POWER_SUPPLY_TYPE_USB,
+ 	.properties = op2_usb_props,
+ 	.num_properties = ARRAY_SIZE(op2_usb_props),

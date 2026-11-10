@@ -1,0 +1,31 @@
+--- a/drivers/media/i2c/ov5648.c
++++ b/drivers/media/i2c/ov5648.c
+@@ -19,6 +19,16 @@
+ #include <media/v4l2-image-sizes.h>
+ #include <media/v4l2-mediabus.h>
+ 
++/* DEBUG task 460: force the sensor-internal color-bar test pattern at stream
++ * on (writes 0x503d = PATTERN_EN | COLOR_BARS, the same value the driver uses
++ * for V4L2_CID_TEST_PATTERN "Color bars") to separate "sensor does not
++ * transmit on the MIPI lanes" from "CSIPHY does not receive". Built-in driver
++ * (CONFIG_VIDEO_OV5648=y): pass ov5648.colorbar=1 on the kernel cmdline. */
++static bool ov5648_colorbar;
++module_param_named(colorbar, ov5648_colorbar, bool, 0644);
++MODULE_PARM_DESC(colorbar,
++		 "Force OV5648 internal color-bar test pattern (reg 0x503d=0x80) at stream on (default 0)");
++
+ /* Clock rate */
+ 
+ #define OV5648_XVCLK_RATE			24000000
+@@ -2179,6 +2189,11 @@
+ 
+ 	mutex_lock(&sensor->mutex);
+ 	ret = ov5648_sw_standby(sensor, !enable);
++	if (!ret && enable && ov5648_colorbar)
++		/* DEBUG task 460: sensor-internal color bar while streaming */
++		ret = ov5648_write(sensor, OV5648_ISP_CTRL3D_REG,
++				   OV5648_ISP_CTRL3D_PATTERN_EN |
++				   OV5648_ISP_CTRL3D_PATTERN_COLOR_BARS);
+ 	mutex_unlock(&sensor->mutex);
+ 
+ 	if (ret)

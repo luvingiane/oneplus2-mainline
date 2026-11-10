@@ -1,0 +1,11 @@
+[Unit]
+Description=OnePlus 2 battery log (one line every 30 s, /var/log/op2-battery.csv)
+
+[Service]
+ExecStart=/usr/local/bin/op2-batlog
+Restart=always
+RestartSec=5
+Nice=10
+
+[Install]
+WantedBy=multi-user.target

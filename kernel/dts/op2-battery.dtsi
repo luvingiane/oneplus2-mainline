@@ -4,7 +4,11 @@
  * Init values = what LK leaves on B while it charges (read 2026-10-26:
  * 0x10f2 FCC_CFG 0x04, 0x10fc CHGR_CFG2 0xd2, 0x13f2 IL_CFG 0x07, 0x1340
  * CMD_IL 0x07, 0x1242 CMD_CHG_REG 0x00 = charging enabled; written 0x02 then
- * 0x00 so the enable is seen as a transition). Plus 0x1341 CMD_APSD 0x01
+ * 0x00 so the enable is seen as a transition).
+ * 10/11: 0x10f4 VFLOAT_CFG 0x29 = 4320 mV and 0x10f9 CFG_TCC 0x03 = ITERM 150 mA, the
+ * stock values (qcom,float-voltage-mv = <0x10e0>, qcom,iterm-ma = <0x96> in the downstream
+ * DTB; encoding qpnp-smbcharger.c:3034-3036, 5476-5485). LK leaves 0x23 (4200 mV) and
+ * 0x05 (250 mA): charging then ends at ~85% ("Full" at 4.17-4.19 V, read on A and B). Plus 0x1341 CMD_APSD 0x01
  * (APSD_RERUN, qpnp-smbcharger.c:5510/5655) so a non-LK boot re-detects the
  * USB source and actually charges. Triples:
  * <address value sec>, sec = needs the SEC_ACCESS unlock (0xa5 at 0x?d0).
@@ -19,6 +23,8 @@
 					     0x13f2 0x07 1
 					     0x1340 0x07 0
 					     0x1341 0x01 0
+					     0x10f4 0x29 1
+					     0x10f9 0x03 1
 					     0x1242 0x02 0
 					     0x1242 0x00 0>;
 		};

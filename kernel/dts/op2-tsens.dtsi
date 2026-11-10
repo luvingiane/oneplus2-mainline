@@ -1,12 +1,264 @@
 // SPDX-License-Identifier: GPL-2.0
+#include <dt-bindings/thermal/thermal.h>
 /*
  * OnePlus 2 (DTS_DEFINES=OP2_TSENS): MSM8994 TSENS reader (patch 0159).
  * Registers as downstream msm8994.dtsi:3198: TSENS 0xfc4a8000 (0x2000),
  * calibration fuses 0xfc4bc000 (0x1000).
+ *
+ * With OP2_THERMAL_ZONES (task 455) the node becomes an OF thermal sensor
+ * and DT zones on the hottest sensors get trips aligned with the stock
+ * qcom,msm-thermal policy (stock-0.dtb:8049-8066: poll 250 ms, core-limit
+ * 80 C, freq-mitigation 95 C, hotplug 105 C, reset 115 C) with cpufreq as
+ * cooling device on all 8 cpus. The 105 C hotplug of cpu4-7 is done by the
+ * driver (tsens-op2.c, param hotplug_mdegc) because mainline DT has no cpu
+ * hotplug cooling binding.
  */
 &soc {
-	op2-tsens@fc4a8000 {
+	op2_tsens: op2-tsens@fc4a8000 {
 		compatible = "oneplus,op2-tsens";
 		reg = <0xfc4a8000 0x2000>, <0xfc4bc000 0x1000>;
+#ifdef OP2_THERMAL_ZONES
+		#thermal-sensor-cells = <1>;
+#endif
 	};
 };
+
+#ifdef OP2_THERMAL_ZONES
+&{/cpus/cpu@0} { #cooling-cells = <2>; };
+&{/cpus/cpu@1} { #cooling-cells = <2>; };
+&{/cpus/cpu@2} { #cooling-cells = <2>; };
+&{/cpus/cpu@3} { #cooling-cells = <2>; };
+&{/cpus/cpu@100} { #cooling-cells = <2>; };
+&{/cpus/cpu@101} { #cooling-cells = <2>; };
+&{/cpus/cpu@102} { #cooling-cells = <2>; };
+&{/cpus/cpu@103} { #cooling-cells = <2>; };
+
+&{/} {
+	thermal-zones {
+		op2-soc-s6-thermal {
+			polling-delay-passive = <250>;
+			polling-delay = <1000>;
+			thermal-sensors = <&op2_tsens 6>;
+			critical-action = "reboot";
+
+			cooling-maps {
+				map0 {
+					trip = <&op2_soc_s6_passive0>;
+					cooling-device =
+						<&{/cpus/cpu@0} THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+						<&{/cpus/cpu@1} THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+						<&{/cpus/cpu@2} THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+						<&{/cpus/cpu@3} THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+						<&{/cpus/cpu@100} THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+						<&{/cpus/cpu@101} THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+						<&{/cpus/cpu@102} THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+						<&{/cpus/cpu@103} THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
+				};
+				map1 {
+					trip = <&op2_soc_s6_passive1>;
+					cooling-device =
+						<&{/cpus/cpu@0} THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+						<&{/cpus/cpu@1} THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+						<&{/cpus/cpu@2} THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+						<&{/cpus/cpu@3} THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+						<&{/cpus/cpu@100} THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+						<&{/cpus/cpu@101} THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+						<&{/cpus/cpu@102} THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+						<&{/cpus/cpu@103} THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
+				};
+			};
+
+			trips {
+				op2_soc_s6_passive0: op2-soc-s6-passive0 {
+					temperature = <80000>;
+					hysteresis = <5000>;
+					type = "passive";
+				};
+				op2_soc_s6_passive1: op2-soc-s6-passive1 {
+					temperature = <95000>;
+					hysteresis = <5000>;
+					type = "passive";
+				};
+				op2_soc_s6_hot: op2-soc-s6-hot {
+					temperature = <105000>;
+					hysteresis = <0>;
+					type = "hot";
+				};
+				op2_soc_s6_crit: op2-soc-s6-critical {
+					temperature = <115000>;
+					hysteresis = <0>;
+					type = "critical";
+				};
+			};
+		};
+		op2-soc-s13-thermal {
+			polling-delay-passive = <250>;
+			polling-delay = <1000>;
+			thermal-sensors = <&op2_tsens 13>;
+			critical-action = "reboot";
+
+			cooling-maps {
+				map0 {
+					trip = <&op2_soc_s13_passive0>;
+					cooling-device =
+						<&{/cpus/cpu@0} THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+						<&{/cpus/cpu@1} THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+						<&{/cpus/cpu@2} THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+						<&{/cpus/cpu@3} THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+						<&{/cpus/cpu@100} THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+						<&{/cpus/cpu@101} THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+						<&{/cpus/cpu@102} THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+						<&{/cpus/cpu@103} THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
+				};
+				map1 {
+					trip = <&op2_soc_s13_passive1>;
+					cooling-device =
+						<&{/cpus/cpu@0} THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+						<&{/cpus/cpu@1} THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+						<&{/cpus/cpu@2} THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+						<&{/cpus/cpu@3} THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+						<&{/cpus/cpu@100} THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+						<&{/cpus/cpu@101} THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+						<&{/cpus/cpu@102} THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+						<&{/cpus/cpu@103} THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
+				};
+			};
+
+			trips {
+				op2_soc_s13_passive0: op2-soc-s13-passive0 {
+					temperature = <80000>;
+					hysteresis = <5000>;
+					type = "passive";
+				};
+				op2_soc_s13_passive1: op2-soc-s13-passive1 {
+					temperature = <95000>;
+					hysteresis = <5000>;
+					type = "passive";
+				};
+				op2_soc_s13_hot: op2-soc-s13-hot {
+					temperature = <105000>;
+					hysteresis = <0>;
+					type = "hot";
+				};
+				op2_soc_s13_crit: op2-soc-s13-critical {
+					temperature = <115000>;
+					hysteresis = <0>;
+					type = "critical";
+				};
+			};
+		};
+		op2-soc-s14-thermal {
+			polling-delay-passive = <250>;
+			polling-delay = <1000>;
+			thermal-sensors = <&op2_tsens 14>;
+			critical-action = "reboot";
+
+			cooling-maps {
+				map0 {
+					trip = <&op2_soc_s14_passive0>;
+					cooling-device =
+						<&{/cpus/cpu@0} THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+						<&{/cpus/cpu@1} THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+						<&{/cpus/cpu@2} THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+						<&{/cpus/cpu@3} THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+						<&{/cpus/cpu@100} THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+						<&{/cpus/cpu@101} THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+						<&{/cpus/cpu@102} THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+						<&{/cpus/cpu@103} THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
+				};
+				map1 {
+					trip = <&op2_soc_s14_passive1>;
+					cooling-device =
+						<&{/cpus/cpu@0} THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+						<&{/cpus/cpu@1} THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+						<&{/cpus/cpu@2} THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+						<&{/cpus/cpu@3} THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+						<&{/cpus/cpu@100} THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+						<&{/cpus/cpu@101} THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+						<&{/cpus/cpu@102} THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+						<&{/cpus/cpu@103} THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
+				};
+			};
+
+			trips {
+				op2_soc_s14_passive0: op2-soc-s14-passive0 {
+					temperature = <80000>;
+					hysteresis = <5000>;
+					type = "passive";
+				};
+				op2_soc_s14_passive1: op2-soc-s14-passive1 {
+					temperature = <95000>;
+					hysteresis = <5000>;
+					type = "passive";
+				};
+				op2_soc_s14_hot: op2-soc-s14-hot {
+					temperature = <105000>;
+					hysteresis = <0>;
+					type = "hot";
+				};
+				op2_soc_s14_crit: op2-soc-s14-critical {
+					temperature = <115000>;
+					hysteresis = <0>;
+					type = "critical";
+				};
+			};
+		};
+		op2-soc-s15-thermal {
+			polling-delay-passive = <250>;
+			polling-delay = <1000>;
+			thermal-sensors = <&op2_tsens 15>;
+			critical-action = "reboot";
+
+			cooling-maps {
+				map0 {
+					trip = <&op2_soc_s15_passive0>;
+					cooling-device =
+						<&{/cpus/cpu@0} THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+						<&{/cpus/cpu@1} THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+						<&{/cpus/cpu@2} THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+						<&{/cpus/cpu@3} THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+						<&{/cpus/cpu@100} THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+						<&{/cpus/cpu@101} THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+						<&{/cpus/cpu@102} THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+						<&{/cpus/cpu@103} THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
+				};
+				map1 {
+					trip = <&op2_soc_s15_passive1>;
+					cooling-device =
+						<&{/cpus/cpu@0} THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+						<&{/cpus/cpu@1} THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+						<&{/cpus/cpu@2} THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+						<&{/cpus/cpu@3} THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+						<&{/cpus/cpu@100} THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+						<&{/cpus/cpu@101} THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+						<&{/cpus/cpu@102} THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+						<&{/cpus/cpu@103} THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
+				};
+			};
+
+			trips {
+				op2_soc_s15_passive0: op2-soc-s15-passive0 {
+					temperature = <80000>;
+					hysteresis = <5000>;
+					type = "passive";
+				};
+				op2_soc_s15_passive1: op2-soc-s15-passive1 {
+					temperature = <95000>;
+					hysteresis = <5000>;
+					type = "passive";
+				};
+				op2_soc_s15_hot: op2-soc-s15-hot {
+					temperature = <105000>;
+					hysteresis = <0>;
+					type = "hot";
+				};
+				op2_soc_s15_crit: op2-soc-s15-critical {
+					temperature = <115000>;
+					hysteresis = <0>;
+					type = "critical";
+				};
+			};
+		};
+	};
+};
+#endif

@@ -435,8 +435,10 @@
 
 		rmi4-f1a@1a {
 			reg = <0x1a>;
-			/* the pad's second key is the owner's Start key (tap = Start, long = app switcher): the phone's real home is the fingerprint sensor, owned by TrustZone */
-			linux,keycodes = <KEY_BACK KEY_HOMEPAGE KEY_APPSELECT>;
+			/* original order (back, recents = ztMETRO's Search, home): the pad's second key is Search again.
+			 * Between 4/11 and 10/11 it was KEY_HOMEPAGE (Start) as a stopgap; the phone's real home is the
+			 * fingerprint sensor (task 437 for its touch detection) */
+			linux,keycodes = <KEY_BACK KEY_APPSELECT KEY_HOMEPAGE>;
 		};
 	};
 };
@@ -515,8 +517,10 @@
 };
 
 &tlmm {
-	/* BLSP2 QUP6 (fingerprint SPI) belongs to TrustZone */
+	/* BLSP2 QUP6 (fingerprint SPI) belongs to TrustZone (not with OP2_FPC: the SPI is ours then) */
+#ifndef OP2_FPC
 	gpio-reserved-ranges = <85 4>;
+#endif
 
 	/*
 	 * GPIO 31 (touch reset, active low) is left as the bootloader has it:

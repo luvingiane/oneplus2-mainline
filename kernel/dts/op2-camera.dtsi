@@ -13,10 +13,13 @@
  *   cam_vdig = pm8994_l3 1.2 V, cam_vio = pm8994_lvs1 1.8 V,
  *   cam_vana = pm8994_l17 2.7 V.
  * - Posteriore OV13860 (master 0, csiphy0, MCLK0 gpio13, reset gpio92,
- *   standby gpio102, vaf gpio93 + pm8994_l29 2.8 V): nessun driver in
- *   mainline 7.3 (grep ov13860 in drivers/media = 0 hit) -> il nodo va
- *   aggiunto quando arriva il driver; indirizzo I2C da confermare con
- *   i2cdetect su A (l'eeprom rear e' a 0x50).
+ *   standby gpio102, vaf gpio93 + pm8994_l23 2.8 V: stock op2-hw14.dts
+ *   actuator@1 cam_vaf-supply = <0x194> = regulator-l23 = pm8994_l23
+ *   (op2-hw14.dts:4201-4209); l29 e' cam_v_custom1 di camera@0, non VAF).
+ *   Indirizzo I2C 7 bit 0x10 (0x20 a 8 bit): fonte pubblica CAF
+ *   (gionee IUNI U3, qcom,slave-id = <0x20 0x300a 0x0138> per ov13860;
+ *   CAF usa slave_addr >> 1, msm_sensor.c:1616). Da confermare con
+ *   i2cdetect su A (l'eeprom rear e' a 0x50 sullo stesso master).
  */
 
 &rpm_requests {
@@ -37,13 +40,13 @@
 			regulator-max-microvolt = <2700000>;
 		};
 
-		/* cam_vaf (actuator@1) 2.8 V */
+		/* cam_vaf (stock actuator@1 cam_vaf-supply = l23) 2.8 V */
 		pm8994_l23: l23 {
 			regulator-min-microvolt = <2800000>;
 			regulator-max-microvolt = <2800000>;
 		};
 
-		/* cam_v_custom1 (VAF rear) 2.8 V */
+		/* cam_v_custom1 di camera@0 (rear, NON e' il VAF) 2.8 V */
 		pm8994_l29: l29 {
 			regulator-min-microvolt = <2800000>;
 			regulator-max-microvolt = <2800000>;
@@ -79,6 +82,21 @@
 
 	cam_front_default: cam-front-default-state {
 		pins = "gpio104", "gpio105";
+		function = "gpio";
+	};
+
+	/* Posteriore OV13860: stock op2-hw14.dts cam_sensor_mclk0_active =
+	 * gpio13 func cam_mclk0 (op2-hw14.dts:12416-12426), cam_sensor_rear_active
+	 * = gpio92/93 + standby gpio102 (op2-hw14.dts:12441-12450) */
+	cam_mclk0_default: cam-mclk0-default-state {
+		pins = "gpio13";
+		function = "cam_mclk0";
+		drive-strength = <2>;
+		bias-disable;
+	};
+
+	cam_rear_default: cam-rear-default-state {
+		pins = "gpio92", "gpio93", "gpio102";
 		function = "gpio";
 	};
 };
@@ -124,6 +142,16 @@
 
 &camss {
 	ports {
+#ifdef OP2_CAMREAR	/* rear OV13860: only with its driver (432 patch); without it camss waits forever */
+		port@0 {
+			camss_endpoint0: endpoint {
+				/* OV13860 rear: 4 data lane, clock lane 1
+				 * (convenzione camss 2ph: clock lane = 1) */
+				data-lanes = <0 2 3 4>;
+				remote-endpoint = <&cam_rear_ep>;
+			};
+		};
+#endif
 		port@2 {
 			camss_endpoint2: endpoint {
 				/* 2-phase CSIPHY (8916 style): the driver puts the
@@ -188,3 +216,46 @@
 		};
 	};
 };
+
+#ifdef OP2_CAMREAR
+&cci_i2c0 {
+	/* Posteriore OV13860: CCI master 0, csiphy0/csid0 (port@0), MCLK0 =
+	 * gpio13 24 MHz, reset gpio92, standby gpio102, VAF gpio93 +
+	 * pm8994_l23 2.8 V (stock op2-hw14.dts camera@0 :9746, gpios :9769,
+	 * actuator@1 cam_vaf-supply <0x194> = pm8994_l23).
+	 * Indirizzo I2C 7 bit 0x10 = 0x20 a 8 bit (fonte pubblica CAF:
+	 * gionee IUNI U3 qcom,slave-id = <0x20 0x300a 0x0138>; CAF usa
+	 * slave_addr >> 1, msm_sensor.c:1616). Da confermare con i2cdetect
+	 * su A: l'eeprom rear e' a 0x50 sullo stesso master. */
+	camera_rear: camera@10 {
+		compatible = "ovti,ov13860";
+		reg = <0x10>;
+
+		clocks = <&mmcc CAMSS_MCLK0_CLK>;
+		clock-frequency = <24000000>;
+		assigned-clocks = <&mmcc MCLK0_CLK_SRC>, <&mmcc CAMSS_MCLK0_CLK>;
+		assigned-clock-rates = <24000000>, <24000000>;
+
+		reset-gpios = <&tlmm 92 GPIO_ACTIVE_LOW>;
+		powerdown-gpios = <&tlmm 102 GPIO_ACTIVE_LOW>;
+
+		dvdd-supply = <&pm8994_l3>;	/* 1.25 V rear nello stock (camera@0) */
+		avdd-supply = <&pm8994_l17>;
+		dovdd-supply = <&pm8994_lvs1>;
+		vaf-supply = <&pm8994_l23>;	/* VAF = l23, NON l29 */
+
+		pinctrl-names = "default";
+		pinctrl-0 = <&cam_mclk0_default &cam_rear_default>;
+
+		status = "okay";
+
+		port {
+			cam_rear_ep: endpoint {
+				data-lanes = <0 2 3 4>;
+				link-frequencies = /bits/ 64 <1200000000>;
+				remote-endpoint = <&camss_endpoint0>;
+			};
+		};
+	};
+};
+#endif

@@ -1,0 +1,50 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * OnePlus 2: FPC fingerprint sensor — minimal DT probe (task 396).
+ * Stock wiring: research/stock-dtb/stock-0.dtb spi@f9968000 > fpc_fpc1020@0
+ * (decompiled lines 4999-5057); research/lineage-kernel/arch/arm/boot/dts/qcom/
+ * msm8994-mtp.dtsi:371-424. No mainline "fpc,fpc1020" driver exists, so with
+ * OP2_FPC the slave binds "linux,spidev": userspace can pulse reset (gpio89),
+ * enable 1V8 (gpio41) and read the HWID register (0xfc, 2 bytes; expected
+ * 0x020a / 0x021a / 0x021b / 0x150a / 0x150b / 0x150f — fpc1020_regs.h and
+ * chip_data[] in the GPL FPC driver, OnePlusOSS/android_kernel_oneplus_msm8994
+ * drivers/input/misc/fpc1020_regs.h, fpc1020_common.c).
+ * No dmas property: spi-qup falls back to PIO when dma_request_chan fails
+ * (drivers/spi/spi-qup.c spi_qup_probe: can_dma stays unset).
+ * NOTE: valid only while the TrustZone does NOT own the QUP pipe. The stock
+ * fpc1020_tee.c cedes BLSP2 QUP6 to TZ via SCM TZ_BLSP_MODIFY_OWNERSHIP
+ * (lineage fpc1020_tee.c:446-475, set_pipe_ownership); on mainline the
+ * "fingerprints" TA is loaded only with OP2_FPCTZ (patch 0160), so in an
+ * OP2_FPC build the pipe stays with REE and the sensor is reachable.
+ */
+#ifdef OP2_FPC
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/interrupt-controller/irq.h>
+#include <dt-bindings/input/linux-event-codes.h>
+
+&blsp2_spi6 {
+	status = "okay";
+	/* the chip select is the controller's property (spi.c reads cs-gpios from the controller node) */
+	cs-gpios = <&tlmm 87 GPIO_ACTIVE_LOW>;
+	pinctrl-names = "default", "sleep";
+	pinctrl-0 = <&fpc_spi_default &fpc_cs_default>;
+	pinctrl-1 = <&fpc_spi_sleep>;
+
+	fpc1020@0 {
+		compatible = "rohm,dh2228fv";	/* any name in spidev's table: binds /dev/spidevB.C */
+		reg = <0>;
+		spi-max-frequency = <4800000>;
+		/* stock: '#spi-cs-high' is commented out, i.e. the chip select is active low */
+		interrupt-parent = <&tlmm>;
+		interrupts = <90 IRQ_TYPE_EDGE_RISING>;
+		vdd-io-supply = <&pm8994_s4>;
+		vdd-ana-supply = <&pm8994_l18>;
+		reset-gpios = <&tlmm 89 GPIO_ACTIVE_LOW>;
+		envdd-gpios = <&tlmm 41 GPIO_ACTIVE_HIGH>;
+		status = "okay";
+	};
+};
+
+/* The home key is op2-fpcd (tools/op2-fpcd): it arms the sensor's finger detect and reports KEY_HOMEPAGE through
+ * uinput; the chip holds gpio90 high until reg 0x1c is read over SPI, which a plain gpio-keys cannot do. */
+#endif

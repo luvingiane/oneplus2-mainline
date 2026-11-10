@@ -1,0 +1,11 @@
+[Unit]
+Description=OnePlus 2: ensure a ztOS ringtone file exists
+After=local-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/op2-ensure-ringtone
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

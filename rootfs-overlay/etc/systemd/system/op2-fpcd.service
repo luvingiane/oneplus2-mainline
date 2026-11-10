@@ -1,0 +1,13 @@
+[Unit]
+Description=OnePlus 2 home key (FPC1150B pad -> KEY_HOMEPAGE through uinput)
+ConditionPathExists=/dev/spidev0.0
+After=systemd-udevd.service
+Before=greetd.service
+
+[Service]
+ExecStart=/usr/local/bin/op2-fpcd
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

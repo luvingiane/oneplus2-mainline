@@ -25,23 +25,31 @@ Ultima tappa (2026-11-03): la GPU hardware disegna l'interfaccia di ztOS su main
 
 *Funziona* vuol dire il 100% della funzione, provata sul telefono; *Parziale* dice nelle note cosa manca. Stesse parole delle pagine dispositivo di ztOS ([devices.ztos.online](https://devices.ztos.online)).
 
+**21 funzionano · 2 parziali · 9 non funzionano · 6 non provati**
+
+*Funziona* vuol dire il 100% della funzione, provata sul telefono; *Parziale* dice nelle note cosa manca. Stesse parole delle pagine dispositivo di ztOS ([devices.ztos.online](https://devices.ztos.online)).
+
+**23 funzionano · 3 parziali · 8 non funzionano · 4 non provati**
+
+*Funziona* vuol dire il 100% della funzione, provata sul telefono; *Parziale* dice nelle note cosa manca. Stesse parole delle pagine dispositivo di ztOS ([devices.ztos.online](https://devices.ztos.online)).
+
 | Categoria | Funzione | Stato | Note |
 |---|---|---|---|
 | Boot | Mainline kernel boot (7.3), from RAM and from flash | 🟢 Funziona | `fastboot boot` e partizione boot; l'avvio a freddo arriva alla shell ztMETRO |
 | Boot | Boot logo | 🟢 Funziona | logo Arch Linux nella partizione `LOGO` (`tools/boot-logo`) |
 | Boot | CPU, 4 × A53 | 🟢 Funziona | avvio ACC stile CAF (patch 0010), clock fisso di circa 1,5 GHz |
-| Boot | CPU, 4 × A57 | 🔴 Non funziona | si accendono con clock vero ma l'avvio diventa intermittente (3 su 4); lasciati spenti |
+| Boot | CPU, 4 × A57 | 🟡 Parziale | accesi e stabili a pieno carico a 600 MHz fissi (8 core, con display e GPU attivi); un clock più alto tramite la PLL del cluster blocca il boot insieme alla GPU (causa in ricerca); spenti di default perché 8 core scaldano molto |
 | Boot | CPU frequency scaling | 🔴 Non funziona | niente cpufreq: driver del clock e tabella OPP sono bozze, una prova a 1 V / 1536 MHz ha fatto crashare l'avvio |
 | Display | Panel (JD35695, 1080p, DSI command mode) | 🟢 Funziona | driver del pannello (`kernel/panel`), MDP5 + DSI |
 | Display | GPU (Adreno 430) | 🟢 Funziona | OpenGL ES 3.0 hardware (freedreno) disegna tutta l'interfaccia; servono le patch 0130 + 0144 (IOVA identità, il TZ rifiuta la SMMU) |
 | Input | Touchscreen (Synaptics S3320) | 🟢 Funziona | multi-touch; il GPIO 74 deve restare acceso |
 | Input | Power and volume keys | 🟢 Funziona | screenshot con accensione + volume su, volume a schermo spento |
-| Input | Capacitive touch keys | 🟡 Parziale | gli eventi arrivano e il tasto di sinistra fa da Home; l'altro non è stato controllato |
+| Input | Capacitive touch keys | 🟢 Funziona | i tasti indietro e recenti (cerca) funzionano; il tasto home è il pad dell'impronta, letto via SPI dal demone op2-fpcd (KEY_HOMEPAGE tramite uinput) |
 | Input | Alert slider | 🟢 Funziona | `gpio-keys` F13/F15 |
 | Audio | Loudspeaker | 🟢 Funziona | ADSP + MI2S quaternario q6 → TFA9890 |
 | Audio | Earpiece, headphone jack, microphones | 🔴 Non funziona | codec WCD9330: lo SLIMbus non enumera mai (capability exchange scade), nessun driver mainline del codec |
 | Audio | Audio of a phone call | 🔴 Non funziona | serve il percorso modem-codec su SLIMbus |
-| Audio | Ringtone | 🔴 Non funziona | il telefono non suona alla chiamata in arrivo (chi chiama sente lo squillo); causa non ancora trovata |
+| Audio | Ringtone | 🟢 Funziona | il telefono suona alla chiamata in arrivo (mancava il file della suoneria; risolto, confermato con una chiamata vera) |
 | Modem | Modem start and SIM | 🟢 Funziona | remoteproc MSS + ADSP, `rmtfs`, il DPM QMI apre `DATA5_CNTL`, sessione USIM (`scripts/op2-modem-up.sh`) |
 | Modem | Mobile network (LTE) and operator name | 🟢 Funziona | si registra in LTE; tacche e operatore in ztOS |
 | Modem | SMS | 🟢 Funziona | lette dalla memoria della SIM |
@@ -60,10 +68,10 @@ Ultima tappa (2026-11-03): la GPU hardware disegna l'interfaccia di ztOS su main
 | Sensors | Proximity | 🔴 Non funziona | dà un valore costante anche se coperto (non ancora capito) |
 | Sensors | Accelerometer, gyroscope, magnetometer | ⚪ Non provato | l'ADSP li invia (`op2-sensord watch`), non controllati; niente rotazione automatica |
 | Sensors | Hall sensor | ⚪ Non provato | `SW_MACHINE_COVER` sul GPIO 75 |
-| Sensors | Fingerprint reader | ⚪ Non provato |  |
-| Power | Battery and charging | 🟢 Funziona | `kernel/patches/0013` + riesecuzione APSD |
+| Sensors | Fingerprint reader | 🟡 Parziale | l'FPC1150 risponde da Linux via SPI (REE): rilevamento del dito e cattura dell'immagine (80x208) funzionano; il riconoscimento non è ancora fatto |
+| Power | Battery and charging | 🟢 Funziona | si carica fino in fondo (tensione massima 4,32 V e fine carica 150 mA come il firmware originale; il bootloader lascia 4,2 V / 250 mA e la carica si fermava all'85%); il tipo di caricatore viene letto a ogni collegamento |
 | Power | Temperature and thermal throttling | 🟢 Funziona | 16 zone TSENS dai fusibili; `op2-thermal.py` rallenta i post-divisori dei PLL |
-| Power | Vibration | ⚪ Non provato | haptic PMI8994 come dispositivo `FF_RUMBLE`, non ancora sentito a mano |
+| Power | Vibration | 🟢 Funziona | motore ERM tramite il driver haptic del PMI8994; intensità tarata nella shell (durata e livello degli impulsi) |
 | Power | Notification LED | 🟢 Funziona | PMI8994 LPG, rosso/verde/blu |
 
 Stato completo per componente: [STATUS.md](STATUS.md). Il lavoro giorno per giorno,

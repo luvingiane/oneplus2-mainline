@@ -1,0 +1,153 @@
+--- a/drivers/clk/qcom/clk-cpu-8994.c
++++ b/drivers/clk/qcom/clk-cpu-8994.c
+@@ -190,6 +190,7 @@
+ 
+ struct clk_cpu_8994_pll {
+ 	u32 offset;
++	bool rw;	/* task 455: A57 PLLs writable with a57rw, A53 with cpuclk_rw */
+ 	struct clk_regmap clkr;
+ };
+ 
+@@ -198,10 +199,28 @@
+ 	u32 chosen_div;		/* div picked by determine_rate, applied in set_parent */
+ 	struct regmap *pll_regmap;
+ 	struct clk_hw *pll_hws[2];	/* [0] = pll0, [1] = pll1 */
++	bool rw;		/* task 455: writes allowed for this cluster */
++	bool use_shadow;	/* task 455: do not read the mux register (hang-prone
++				 * class on this hw), use shadow_mux instead */
++	u32 shadow_mux;
+ 	struct mutex lock;
+ 	struct clk_regmap clkr;
+ };
+ 
++/* Task 455: read the mux of a cluster. For cluster 1 (A57, 0xf900f054) the
++ * direct read is the same hang-prone class as the c0 mux read (LOG.md:1968);
++ * cpufreq on a57_clk must not read it: every write goes through set_parent,
++ * which keeps shadow_mux in sync (initialised from a57muxw at probe). */
++static u32 clk_cpu_8994_read_mux(struct clk_cpu_8994 *cpuclk)
++{
++	u32 val = 0;
++
++	if (cpuclk->use_shadow)
++		return cpuclk->shadow_mux;
++	regmap_read(cpuclk->clkr.regmap, cpuclk->mux_reg, &val);
++	return val;
++}
++
+ static inline struct clk_cpu_8994_pll *to_pll_8994(struct clk_hw *hw)
+ {
+ 	return container_of(to_clk_regmap(hw), struct clk_cpu_8994_pll, clkr);
+@@ -229,7 +248,7 @@
+ 	int count;
+ 
+ 	/* read-only: the PLL the CPU runs from is already on, do not touch its MODE */
+-	if (!cpuclk_rw)
++	if (!pll->rw)
+ 		return 0;
+ 
+ 	/* Disable bypass */
+@@ -260,7 +279,7 @@
+ {
+ 	struct clk_cpu_8994_pll *pll = to_pll_8994(hw);
+ 
+-	if (!cpuclk_rw)
++	if (!pll->rw)
+ 		return;
+ 
+ 	/* Output off, reset asserted, bypass on */
+@@ -298,7 +317,7 @@
+ 	bool was_enabled = pll_8994_is_enabled(hw);
+ 	u32 l = rate / prate;
+ 
+-	if (!cpuclk_rw)
++	if (!pll->rw)
+ 		return -EPERM;
+ 
+ 	/*
+@@ -380,7 +399,7 @@
+ 	struct clk_cpu_8994 *cpuclk = to_cpuclk_8994(hw);
+ 	u32 val, hf, lf;
+ 
+-	regmap_read(cpuclk->clkr.regmap, cpuclk->mux_reg, &val);
++	val = clk_cpu_8994_read_mux(cpuclk);
+ 	hf = FIELD_GET(MUX_8994_HF_MASK, val);
+ 	lf = FIELD_GET(MUX_8994_LF_MASK, val);
+ 
+@@ -409,7 +428,7 @@
+ 	u32 val, hf, lf;
+ 	int pll_idx = -1;
+ 
+-	if (!cpuclk_rw)
++	if (!cpuclk->rw)
+ 		return -EPERM;
+ 
+ 	switch (index) {
+@@ -441,10 +460,12 @@
+ 	if (pll_idx >= 0)
+ 		pll_8994_set_div(cpuclk, pll_idx, cpuclk->chosen_div);
+ 
+-	regmap_read(cpuclk->clkr.regmap, cpuclk->mux_reg, &val);
++	val = clk_cpu_8994_read_mux(cpuclk);
+ 	val &= ~(MUX_8994_HF_MASK | MUX_8994_LF_MASK);
+ 	val |= FIELD_PREP(MUX_8994_HF_MASK, hf) | FIELD_PREP(MUX_8994_LF_MASK, lf);
+ 	regmap_write(cpuclk->clkr.regmap, cpuclk->mux_reg, val);
++	if (cpuclk->use_shadow)
++		cpuclk->shadow_mux = val;
+ 
+ 	/* Ensure the switch goes through; hardware mandated 5us delay */
+ 	mb();
+@@ -462,7 +483,7 @@
+ 	unsigned long pll_rate;
+ 	int in_use;	/* 0 = pll0 in use, 1 = pll1 in use, -1 = none */
+ 
+-	regmap_read(cpuclk->clkr.regmap, cpuclk->mux_reg, &val);
++	val = clk_cpu_8994_read_mux(cpuclk);
+ 	hf = FIELD_GET(MUX_8994_HF_MASK, val);
+ 	lf = FIELD_GET(MUX_8994_LF_MASK, val);
+ 	if (hf == HF_PLL0 || (hf == HF_LF_MUX && lf == LF_PLL0_DIV))
+@@ -511,7 +532,7 @@
+ 	u32 val, hf, lf;
+ 	int pll_idx;
+ 
+-	regmap_read(cpuclk->clkr.regmap, cpuclk->mux_reg, &val);
++	val = clk_cpu_8994_read_mux(cpuclk);
+ 	hf = FIELD_GET(MUX_8994_HF_MASK, val);
+ 	lf = FIELD_GET(MUX_8994_LF_MASK, val);
+ 
+@@ -746,10 +767,13 @@
+ 		cpuclks[i]->clkr.regmap = mux_maps[i];
+ 		cpuclks[i]->pll_hws[0] = &plls[i][0]->clkr.hw;
+ 		cpuclks[i]->pll_hws[1] = &plls[i][1]->clkr.hw;
++		cpuclks[i]->rw = cpuclk_rw;
+ 		mutex_init(&cpuclks[i]->lock);
+ 
+ 		plls[i][0]->clkr.regmap = pll_maps[i];
+ 		plls[i][1]->clkr.regmap = pll_maps[i];
++		plls[i][0]->rw = cpuclk_rw;
++		plls[i][1]->rw = cpuclk_rw;
+ 	}
+ 
+ 	/* ---- A57 cluster (c1) staged bring-up, all default-off (task 267) ---- */
+@@ -870,9 +894,22 @@
+ 		a57_cpuclk.clkr.regmap = mux_maps[1];
+ 		a57_cpuclk.pll_hws[0] = &a57_pll0.clkr.hw;
+ 		a57_cpuclk.pll_hws[1] = &a57_pll1.clkr.hw;
++		a57_cpuclk.rw = a57rw;
++		a57_cpuclk.use_shadow = true;
++		if (a57stage >= 6 && a57muxw >= 0)
++			a57_cpuclk.shadow_mux = a57muxw;
+ 		mutex_init(&a57_cpuclk.lock);
+ 		a57_pll0.clkr.regmap = pll_maps[1];
+ 		a57_pll1.clkr.regmap = pll_maps[1];
++		a57_pll0.rw = a57rw;
++		a57_pll1.rw = a57rw;
++	}
++
++	/* task 455: a57clk (cpufreq on cpu4-7) needs a known mux state for the
++	 * shadow: require the stage-6 mux write (a57muxw), proven at boot */
++	if (a57clk && (a57stage < 6 || a57muxw < 0)) {
++		dev_warn(dev, "a57clk=1 needs a57stage>=6 and a57muxw>=0 (mux shadow): A57 clock NOT registered\n");
++		a57clk = false;
+ 	}
+ 
+ 	dev_info(dev, "probe: state read, registering clocks\n");

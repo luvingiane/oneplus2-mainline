@@ -1,0 +1,82 @@
+#!/usr/bin/python3
+"""op2-batlog: one line every 30 s in /var/log/op2-battery.csv (battery, charger input, load, screen, network).
+Kept 30 days (older lines dropped at start). Read it with op2-batreport."""
+import glob, os, time
+
+OUT = "/var/log/op2-battery.csv"
+PS = "/sys/class/power_supply"
+COLS = ["time", "uptime_s", "cap", "status", "voltage_uv", "ocv_uv", "current_ua", "temp_dc", "charge_type",
+        "usb_online", "usb_type", "icl_ua", "fcc_ua", "load1", "screen", "rx_kb", "tx_kb", "cpu_online"]
+
+
+def rd(path, default=""):
+    try:
+        with open(path) as f:
+            return f.read().strip()
+    except OSError:
+        return default
+
+
+def find(kind):
+    for d in sorted(glob.glob(PS + "/*")):
+        if rd(d + "/type").startswith(kind):
+            return d
+    return None
+
+
+def net_kb():
+    rx = tx = 0
+    for name in ("wlP1p1s0", "wlan0", "rmnet_data0", "wwan0"):
+        rx += int(rd(f"/sys/class/net/{name}/statistics/rx_bytes", "0") or 0)
+        tx += int(rd(f"/sys/class/net/{name}/statistics/tx_bytes", "0") or 0)
+    return rx // 1024, tx // 1024
+
+
+def screen_on():
+    for b in glob.glob("/sys/class/backlight/*"):
+        v = rd(b + "/bl_power", "0")
+        br = rd(b + "/brightness", "0")
+        return "1" if v == "0" and br not in ("", "0") else "0"
+    return ""
+
+
+def trim():
+    if not os.path.exists(OUT):
+        return
+    cut = time.time() - 30 * 86400
+    keep = []
+    with open(OUT) as f:
+        for line in f:
+            if line.startswith("time"):
+                continue
+            try:
+                if time.mktime(time.strptime(line.split(",")[0], "%Y-%m-%dT%H:%M:%S")) >= cut:
+                    keep.append(line)
+            except ValueError:
+                pass
+    with open(OUT, "w") as f:
+        f.write(",".join(COLS) + "\n")
+        f.writelines(keep)
+
+
+def main():
+    trim()
+    if not os.path.exists(OUT) or os.path.getsize(OUT) == 0:
+        with open(OUT, "w") as f:
+            f.write(",".join(COLS) + "\n")
+    bat, usb = find("Battery"), find("USB")
+    while True:
+        rx, tx = net_kb()
+        row = [time.strftime("%Y-%m-%dT%H:%M:%S"), rd("/proc/uptime").split(".")[0]]
+        for p in ("capacity", "status", "voltage_now", "voltage_ocv", "current_now", "temp", "charge_type"):
+            row.append(rd(f"{bat}/{p}") if bat else "")
+        for p in ("online", "usb_type", "input_current_limit"):
+            row.append(rd(f"{usb}/{p}").replace(",", " ") if usb else "")
+        row.append(rd(f"{bat}/constant_charge_current_max") if bat else "")
+        row += [rd("/proc/loadavg").split()[0], screen_on(), str(rx), str(tx), rd("/sys/devices/system/cpu/online")]
+        with open(OUT, "a") as f:
+            f.write(",".join(x.replace(",", " ") for x in row) + "\n")
+        time.sleep(30)
+
+
+main()

@@ -1,0 +1,150 @@
+--- a/drivers/thermal/qcom/tsens-op2.c
++++ b/drivers/thermal/qcom/tsens-op2.c
+@@ -14,11 +14,26 @@
+  * thresholds. One thermal zone per sensor ("op2-tsensN").
+  */
+ #include <linux/bitfield.h>
++#include <linux/cpu.h>
++#include <linux/delay.h>
++#include <linux/device.h>
+ #include <linux/io.h>
+ #include <linux/module.h>
+ #include <linux/of.h>
+ #include <linux/platform_device.h>
+ #include <linux/thermal.h>
++#include <linux/workqueue.h>
++
++/* Task 455: hotplug dei core A57 (cpu4-7) come lo stock qcom,msm-thermal
++ * (hotplug-temp 105 C, stock-0.dtb:8061). La riaccensione e' default OFF:
++ * su A la riaccensione di un A57 ha dato EIO e crash (LOG.md:2012, prova v1),
++ * quindi reonline_mdegc=0 = mai riaccendere fino al riavvio. */
++static int hotplug_mdegc = 105000;
++module_param_named(hotplug_mdegc, hotplug_mdegc, int, 0644);
++MODULE_PARM_DESC(hotplug_mdegc, "offline cpu4-7 at/above this temp in mdegC (0 = off, stock 105000)");
++static int reonline_mdegc;
++module_param_named(reonline_mdegc, reonline_mdegc, int, 0644);
++MODULE_PARM_DESC(reonline_mdegc, "re-online cpu4-7 at/below this temp in mdegC (0 = never, default)");
+ 
+ #define TSENS_NUM		16
+ #define TSENS_STATUS(n)		(0x1044 + 4 * (n))
+@@ -43,6 +58,7 @@
+ 	struct thermal_zone_device *tz;
+ 	int id;
+ 	int off;	/* code at 30 degC = base0 + offset */
++	bool of_zone;	/* zone registered via devm_thermal_of_zone_register */
+ };
+ 
+ struct op2_tsens {
+@@ -50,8 +66,62 @@
+ 	int base0, base1;
+ 	bool calibrated;
+ 	struct op2_tsens_sensor s[TSENS_NUM];
++	struct delayed_work hotplug_work;
+ };
+ 
++/* max temperature over all 16 sensors, same calibration as get_temp */
++static int op2_tsens_max_temp(struct op2_tsens *tm)
++{
++	int i, t, max = -1;
++
++	for (i = 0; i < TSENS_NUM; i++) {
++		u32 v = readl(tm->base + TSENS_STATUS(i));
++		int code, span;
++
++		if (!(v & TSENS_VALID))
++			continue;
++		code = FIELD_GET(TSENS_CODE, v);
++		span = tm->base1 - tm->base0;
++		if (span <= 0)
++			continue;
++		t = 30000 + (code - (tm->base0 + tm->s[i].off)) * 90000 / span;
++		if (t > max)
++			max = t;
++	}
++	return max;
++}
++
++static void op2_tsens_hotplug_work(struct work_struct *w)
++{
++	struct op2_tsens *tm = container_of(w, struct op2_tsens, hotplug_work.work);
++	int t = op2_tsens_max_temp(tm);
++	int c;
++
++	if (t < 0)
++		goto out;
++	if (t >= hotplug_mdegc) {
++		lock_device_hotplug();
++		for (c = 4; c <= 7; c++)
++			if (cpu_online(c)) {
++				int r = device_offline(get_cpu_device(c));
++				pr_info("op2-tsens: T=%d mdegC >= %d: cpu%d offlined (%d)\n",
++					t, hotplug_mdegc, c, r);
++			}
++		unlock_device_hotplug();
++	} else if (reonline_mdegc > 0 && t <= reonline_mdegc) {
++		lock_device_hotplug();
++		for (c = 4; c <= 7; c++)
++			if (!cpu_online(c) && cpu_possible(c)) {
++				int r = device_online(get_cpu_device(c));
++				pr_info("op2-tsens: T=%d mdegC <= %d: cpu%d onlined (%d)\n",
++					t, reonline_mdegc, c, r);
++			}
++		unlock_device_hotplug();
++	}
++out:
++	schedule_delayed_work(&tm->hotplug_work, msecs_to_jiffies(250));
++}
++
+ static int op2_tsens_get_temp(struct thermal_zone_device *tz, int *temp)
+ {
+ 	struct op2_tsens_sensor *s = thermal_zone_device_priv(tz);
+@@ -138,16 +208,34 @@
+ 		tm->s[i].tm = tm;
+ 		tm->s[i].id = i;
+ 		snprintf(name, sizeof(name), "op2-tsens%d", i);
+-		tm->s[i].tz = thermal_zone_device_register_with_trips(name, NULL, 0,
+-				&tm->s[i], &op2_tsens_ops, NULL, 0, 0);
++		/* task 455: if a DT thermal zone references this sensor
++		 * (/thermal-zones, thermal-sensors = <&op2_tsens i>), register
++		 * through the OF layer so trips and cooling-maps apply; otherwise
++		 * fall back to a plain zone without trips (old behaviour). */
++		tm->s[i].tz = devm_thermal_of_zone_register(&pdev->dev, i,
++				&tm->s[i], &op2_tsens_ops);
++		if (PTR_ERR(tm->s[i].tz) == -ENODEV)
++			tm->s[i].tz = thermal_zone_device_register_with_trips(name,
++					NULL, 0, &tm->s[i], &op2_tsens_ops,
++					NULL, 0, 0);
++		else
++			tm->s[i].of_zone = true;
+ 		if (IS_ERR(tm->s[i].tz)) {
+ 			ret = PTR_ERR(tm->s[i].tz);
+ 			while (--i >= 0)
+-				thermal_zone_device_unregister(tm->s[i].tz);
++				if (!tm->s[i].of_zone)
++					thermal_zone_device_unregister(tm->s[i].tz);
+ 			return ret;
+ 		}
+ 	}
+ 	platform_set_drvdata(pdev, tm);
++
++	if (hotplug_mdegc > 0 && cpu_possible(4)) {
++		INIT_DELAYED_WORK(&tm->hotplug_work, op2_tsens_hotplug_work);
++		schedule_delayed_work(&tm->hotplug_work, msecs_to_jiffies(1000));
++		dev_info(dev, "A57 hotplug: offline cpu4-7 at %d mdegC, reonline at %d mdegC\n",
++			 hotplug_mdegc, reonline_mdegc);
++	}
+ 	return 0;
+ }
+ 
+@@ -156,8 +244,10 @@
+ 	struct op2_tsens *tm = platform_get_drvdata(pdev);
+ 	int i;
+ 
++	cancel_delayed_work_sync(&tm->hotplug_work);
+ 	for (i = 0; i < TSENS_NUM; i++)
+-		thermal_zone_device_unregister(tm->s[i].tz);
++		if (!tm->s[i].of_zone)
++			thermal_zone_device_unregister(tm->s[i].tz);
+ }
+ 
+ static const struct of_device_id op2_tsens_of[] = {
